@@ -913,7 +913,7 @@ pub(super) fn build_ctb_encrypted_container_bytes_with_progress(
         )));
     }
     ctb_encrypt_in_place_no_padding(&mut settings, &key, &iv)?;
-    let settings_start = (CTB_ENCRYPTED_SETTINGS_OFFSET + 264) as usize;
+    let settings_start = CTB_ENCRYPTED_SETTINGS_OFFSET as usize;
     out[settings_start..settings_start + CTB_ENCRYPTED_SETTINGS_SIZE as usize].copy_from_slice(&settings);
 
     let mut header = Vec::with_capacity(CTB_ENCRYPTED_HEADER_SIZE as usize);
