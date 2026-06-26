@@ -59,14 +59,7 @@
     },
     {
       "key": "transitionLayerCount",
-      "label": "Transition Layers",
-      "kind": "integer",
-      "defaultValue": 0,
-      "min": 0,
-      "max": 100000,
-      "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 30 },
-      "metadataPath": "ctb.transitionLayerCount"
+      "defaultValue": 0
     },
     {
       "key": "bottomProjectorPwmPercent",
@@ -92,15 +85,10 @@
     },
     {
       "key": "bottomLiftDistanceMm",
-      "label": "Burn-In Lift Distance (mm)",
-      "kind": "number",
       "defaultValue": 3,
       "tag": "Slow",
       "color": "#f59e0b",
       "splitWithKey": "bottomLiftDistance2Mm",
-      "min": 0,
-      "max": 50,
-      "step": 0.01,
       "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 5 },
       "metadataPath": "ctb.bottomLiftDistanceMm"
     },
@@ -119,15 +107,10 @@
     },
     {
       "key": "bottomLiftSpeedMmMin",
-      "label": "Burn-In Lift Speed (mm/min)",
-      "kind": "number",
       "defaultValue": 60,
       "tag": "Slow",
       "color": "#f59e0b",
       "splitWithKey": "bottomLiftSpeed2MmMin",
-      "min": 0,
-      "max": 100000,
-      "step": 1,
       "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 6 },
       "metadataPath": "ctb.bottomLiftSpeedMmMin"
     },
@@ -146,15 +129,10 @@
     },
     {
       "key": "bottomRetractSpeedMmMin",
-      "label": "Burn-In Retract Speed (mm/min)",
-      "kind": "number",
       "defaultValue": 180,
       "tag": "Fast",
       "color": "#22c55e",
       "splitWithKey": "bottomRetractSpeed2MmMin",
-      "min": 0,
-      "max": 100000,
-      "step": 1,
       "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 7 },
       "metadataPath": "ctb.bottomRetractSpeedMmMin"
     },
@@ -173,17 +151,11 @@
     },
     {
       "key": "liftDistanceMm",
-      "label": "Lift Distance (mm)",
-      "kind": "number",
       "defaultValue": 1,
       "tag": "Slow",
       "color": "#f59e0b",
       "splitWithKey": "liftDistance2Mm",
-      "min": 0,
-      "max": 50,
-      "step": 0.01,
-      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 5 },
-      "metadataPath": "material.liftDistanceMm"
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 5 }
     },
     {
       "key": "liftDistance2Mm",
@@ -200,17 +172,10 @@
     },
     {
       "key": "liftSpeedMmMin",
-      "label": "Lift Speed (mm/min)",
-      "kind": "number",
-      "defaultValue": 60,
       "tag": "Slow",
       "color": "#f59e0b",
       "splitWithKey": "liftSpeed2MmMin",
-      "min": 0,
-      "max": 100000,
-      "step": 1,
-      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 6 },
-      "metadataPath": "material.liftSpeedMmMin"
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 6 }
     },
     {
       "key": "liftSpeed2MmMin",
@@ -227,17 +192,11 @@
     },
     {
       "key": "retractSpeedMmMin",
-      "label": "Retract Speed (mm/min)",
-      "kind": "number",
       "defaultValue": 240,
       "tag": "Fast",
       "color": "#22c55e",
       "splitWithKey": "retractSpeed2MmMin",
-      "min": 0,
-      "max": 100000,
-      "step": 1,
-      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 7 },
-      "metadataPath": "material.retractSpeedMmMin"
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 7 }
     },
     {
       "key": "retractSpeed2MmMin",
@@ -252,15 +211,5 @@
       "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 41 },
       "metadataPath": "ctb.retractSpeed2MmMin"
     }
-  ],
-  "$remove": {
-    "fields": [
-      "bottomLiftDistanceMm",
-      "bottomLiftSpeedMmMin",
-      "bottomRetractSpeedMmMin",
-      "liftDistanceMm",
-      "liftSpeedMmMin",
-      "retractSpeedMmMin"
-    ]
-  }
+  ]
 }

@@ -50,14 +50,7 @@
     },
     {
       "key": "transitionLayerCount",
-      "label": "Transition Layers",
-      "kind": "integer",
-      "defaultValue": 0,
-      "min": 0,
-      "max": 100000,
-      "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 30 },
-      "metadataPath": "ctb.transitionLayerCount"
+      "defaultValue": 0
     },
     {
       "key": "bottomProjectorPwmPercent",
