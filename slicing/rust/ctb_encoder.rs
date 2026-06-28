@@ -298,6 +298,17 @@ enum LayerDefLayout {
     Encrypted, // All encrypted versions: 88-byte def, different field ordering
 }
 
+//TODO generalize function
+fn interpolate_transition_layer_exposure(
+    layer: &CtbPreparedLayer,
+    timing: &CtbTimingModel
+) -> f32 {
+    return timing.bottom_exposure_sec 
+        - (timing.bottom_exposure_sec - timing.normal_exposure_sec) 
+            / (timing.transition_layer_count as f32) 
+            * (layer.index as u32 - timing.bottom_layer_count + 1) as f32;
+}
+
 fn write_layer_def_ex(
     out: &mut Vec<u8>,
     layer: &CtbPreparedLayer,
@@ -379,7 +390,9 @@ fn write_layer_def_ex(
     let exposure_sec = if is_bottom {
         timing.bottom_exposure_sec
     } else {
-        timing.normal_exposure_sec
+        if (layer.index as u32) < (timing.bottom_layer_count + timing.transition_layer_count as u32) {
+                interpolate_transition_layer_exposure(layer, &timing)
+            } else { timing.normal_exposure_sec } //Layer exposure time
     };
     let light_off_sec = if is_bottom {
         timing.bottom_light_off_delay_sec
