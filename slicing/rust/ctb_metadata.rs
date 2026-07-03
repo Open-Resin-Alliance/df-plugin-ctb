@@ -316,8 +316,10 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
     }
 
     if is_tilting_mode {
-        timing.lift_speed_mm_min, timing.bottom_lift_speed_mm_min = 60.0;
-        timing.retract_speed_mm_min, timing.bottom_retract_speed_mm_min = 150.0;
+        timing.lift_speed_mm_min = 60.0;
+        timing.bottom_lift_speed_mm_min = 60.0;
+        timing.retract_speed_mm_min = 150.0;
+        timing.bottom_retract_speed_mm_min = 150.0;
         timing.lift_distance_mm = read_f32("layerHeightMm");
         timing.bottom_lift_distance_mm = read_f32("layerHeightMm");
     }
