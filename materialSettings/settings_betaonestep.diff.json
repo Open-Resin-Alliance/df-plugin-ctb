@@ -62,17 +62,6 @@
       "step": 1,
       "placement": { "tabId": "simple", "sectionId": "light", "cardId": "light-settings", "order": 75 },
       "metadataPath": "ctb.bottomLayerProjectorPwmPercent"
-    },
-    {
-      "key": "minimumAaAlphaPercent",
-      "label": "Minimum AA Alpha (%)",
-      "kind": "number",
-      "defaultValue": 35,
-      "min": 0,
-      "max": 100,
-      "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "light", "cardId": "light-settings", "order": 80 },
-      "metadataPath": "dragonFruit.minimumAaAlphaPercent"
     }
   ]
 }

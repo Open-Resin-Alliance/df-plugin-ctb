@@ -20,6 +20,7 @@ export const CTB_FORMAT_DEFINITION: SlicingFormatDefinition = {
     { value: 'simple', label: 'Simple', isDefault: true },
     { value: 'twostage', label: 'Two Stage' },
     { value: 'betaonestep', label: 'Advanced Single Step Motion'},
+    { value: 'tilting', label: 'Tilting Vat' }
   ],
   rustModulePath: 'formats::ctb',
   wasmExportName: 'encode_ctb_container',

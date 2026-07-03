@@ -80,6 +80,11 @@
       "metadataPath": "material.bottomLiftDistanceMm"
     },
     {
+      "key": "gapAfterBottomLiftDistance",
+      "kind": "spacer",
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 41 }
+    },
+    {
       "key": "bottomLiftSpeedMmMin",
       "label": "Burn-in Lift Speed (mm/min)",
       "kind": "number",
@@ -89,11 +94,6 @@
       "step": 1,
       "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 50 },
       "metadataPath": "material.bottomLiftSpeedMmMin"
-    },
-    {
-      "key": "gapAfterBottomLiftSpeed",
-      "kind": "spacer",
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 51 }
     },
     {
       "key": "bottomRetractSpeedMmMin",
@@ -134,6 +134,11 @@
       "metadataPath": "material.liftDistanceMm"
     },
     {
+      "key": "gapAfterLiftDistance",
+      "kind": "spacer",
+      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 31 }
+    },
+    {
       "key": "liftSpeedMmMin",
       "label": "Lift Speed (mm/min)",
       "kind": "number",
@@ -143,11 +148,6 @@
       "step": 1,
       "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 40 },
       "metadataPath": "material.liftSpeedMmMin"
-    },
-    {
-      "key": "gapAfterLiftSpeed",
-      "kind": "spacer",
-      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 41 }
     },
     {
       "key": "retractSpeedMmMin",
