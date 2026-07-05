@@ -1,5 +1,5 @@
 {
-    "$inherit": "betaonestep",
+    "$inherit": "simple",
     "$remove":
     {
         "fields": [
