@@ -143,7 +143,7 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
     let is_simple_mode = matches!(settings_mode.as_deref(), Some("simple"));
 
     // Beta one step for S4U tilting + bottom wait times 
-    let is_beta_simple_mode = matches!(settings_mode.as_deref(), Some("betaonestep"));
+    let is_allfields_mode = matches!(settings_mode.as_deref(), Some("allfields"));
     let is_tilting_mode = matches!(settings_mode.as_deref(), Some("tilting"));
 
 
@@ -304,7 +304,7 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
         timing.bottom_wait_time_before_cure_sec = 0.0;
     }
 
-    if is_beta_simple_mode {
+    if is_allfields_mode {
         timing.lift_distance2_mm = 0.0;
         timing.lift_speed2_mm_min = 0.0;
         timing.retract_distance2_mm = 0.0;

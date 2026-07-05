@@ -7,10 +7,8 @@ import { resolveDifferentialMaterialSettings } from '@/features/plugins/resolveD
 import { CTB_PLUGIN_MANIFEST } from './pluginManifest';
 import { CTB_FORMAT_DEFINITION } from './slicing/ctbFormatDefinition';
 import ctbSimpleMaterialSettings from './materialSettings/settings_simple.json';
-import ctbTwostageMaterialSettings from './materialSettings/settings_twostage.json';
-import ctbBetaSimpleMaterialSettings from './materialSettings/settings_betaonestep.json';
 import ctbTwostageDiffMaterialSettings from './materialSettings/settings_twostage.diff.json';
-import ctbBetaSimpleDiffMaterialSettings from './materialSettings/settings_betaonestep.diff.json';
+import ctbAllFieldsDiffMaterialSettings from './materialSettings/settings_allfields.diff.json';
 import ctbTiltingDiffMaterialSettings from './materialSettings/settings_tilting.diff.json';
 
 
@@ -32,13 +30,13 @@ function createCtbModeSettingsAdapter(
 const CTB_MODE_SOURCES: Record<string, MaterialSettingsSource> = {
     simple: ctbSimpleMaterialSettings as MaterialSettingsSource,
     twostage: ctbTwostageDiffMaterialSettings as MaterialSettingsSource,
-    betaonestep: ctbBetaSimpleDiffMaterialSettings as MaterialSettingsSource,
+    allfields: ctbAllFieldsDiffMaterialSettings as MaterialSettingsSource,
     tilting: ctbTiltingDiffMaterialSettings as MaterialSettingsSource,
 };
 
 const CTB_LOCAL_MATERIAL_SETTINGS_SIMPLE_ADAPTER = createCtbModeSettingsAdapter('simple', CTB_MODE_SOURCES);
 const CTB_LOCAL_MATERIAL_SETTINGS_TWOSTAGE_ADAPTER = createCtbModeSettingsAdapter('twostage', CTB_MODE_SOURCES);
-const CTB_LOCAL_MATERIAL_SETTINGS_BETA_SIMPLE_ADAPTER = createCtbModeSettingsAdapter('betaonestep', CTB_MODE_SOURCES);
+const CTB_LOCAL_MATERIAL_SETTINGS_ALLFIELDS_ADAPTER = createCtbModeSettingsAdapter('allfields', CTB_MODE_SOURCES);
 const CTB_LOCAL_MATERIAL_SETTINGS_TILTING_ADAPTER = createCtbModeSettingsAdapter('tilting', CTB_MODE_SOURCES);
 
 export const CTB_COMPLEX_PLUGIN_DEFINITION: ComplexPluginDefinition = {
@@ -60,7 +58,7 @@ export const CTB_COMPLEX_PLUGIN_DEFINITION: ComplexPluginDefinition = {
         [CTB_FORMAT_DEFINITION.outputFormat]: {
             simple: CTB_LOCAL_MATERIAL_SETTINGS_SIMPLE_ADAPTER,
             twostage: CTB_LOCAL_MATERIAL_SETTINGS_TWOSTAGE_ADAPTER,
-            betaonestep: CTB_LOCAL_MATERIAL_SETTINGS_BETA_SIMPLE_ADAPTER,
+            allfields: CTB_LOCAL_MATERIAL_SETTINGS_ALLFIELDS_ADAPTER,
             tilting: CTB_LOCAL_MATERIAL_SETTINGS_TILTING_ADAPTER,
         },
     },
