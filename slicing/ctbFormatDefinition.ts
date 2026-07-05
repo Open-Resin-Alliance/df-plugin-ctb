@@ -19,8 +19,8 @@ export const CTB_FORMAT_DEFINITION: SlicingFormatDefinition = {
   settingsModes: [
     { value: 'simple', label: 'Simple', isDefault: true },
     { value: 'twostage', label: 'Two Stage' },
-    { value: 'allfields', label: 'Advanced Single Step Motion'},
-    { value: 'tilting', label: 'Tilting Vat' }
+    { value: 'tilting', label: 'Tilting Vat' },
+    { value: 'allfields', label: 'All Fields Single Step Motion'}
   ],
   rustModulePath: 'formats::ctb',
   wasmExportName: 'encode_ctb_container',
