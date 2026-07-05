@@ -5,12 +5,14 @@
     { "id": "simple", "title": "Simple", "order": 10 }
   ],
   "sections": [
+    { "id": "global", "title": "General Settings", "tabId": "simple", "order": 9 },
     { "id": "burn-in", "title": "Burn In Layers", "tabId": "simple", "order": 10 },
     { "id": "normal", "title": "Normal Layers", "tabId": "simple", "order": 20 },
     { "id": "timing", "title": "Timing", "tabId": "simple", "order": 30 },
     { "id": "light", "title": "Light Settings", "tabId": "simple", "order": 40 }
   ],
   "cards": [
+    { "id": "global-settings", "title": "General Settings", "tabId": "simple", "sectionId": "normal", "order": 9 },
     { "id": "burn-in-settings", "title": "Burn In Layers", "tabId": "simple", "sectionId": "burn-in", "order": 10 },
     { "id": "normal-settings", "title": "Normal Layers", "tabId": "simple", "sectionId": "normal", "order": 20 },
     { "id": "timing-settings", "title": "Timing", "tabId": "simple", "sectionId": "timing", "order": 30 },
@@ -25,7 +27,7 @@
       "min": 0.001,
       "max": 1,
       "step": 0.001,
-      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 10 },
+      "placement": { "tabId": "simple", "sectionId": "global", "cardId": "global-settings", "order": 10 },
       "metadataPath": "material.layerHeightMm"
     },
     {
@@ -40,6 +42,17 @@
       "metadataPath": "material.bottomLayerCount"
     },
     {
+      "key": "transitionLayerCount",
+      "label": "Transition Layers",
+      "kind": "integer",
+      "defaultValue": 5,
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 20 },
+      "metadataPath": "ctb.transitionLayerCount"
+    },
+    {
       "key": "bottomExposureSec",
       "label": "Burn-in Exposure (s)",
       "kind": "number",
@@ -47,8 +60,13 @@
       "min": 0,
       "max": 300,
       "step": 0.1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 20 },
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 30 },
       "metadataPath": "material.bottomExposureSec"
+    },
+    {
+      "key": "gapAfterBottomExposure",
+      "kind": "spacer",
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 31 }
     },
     {
       "key": "bottomLiftDistanceMm",
@@ -58,8 +76,13 @@
       "min": 0,
       "max": 50,
       "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 30 },
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 40 },
       "metadataPath": "material.bottomLiftDistanceMm"
+    },
+    {
+      "key": "gapAfterBottomLiftDistance",
+      "kind": "spacer",
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 41 }
     },
     {
       "key": "bottomLiftSpeedMmMin",
@@ -69,7 +92,7 @@
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 40 },
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 50 },
       "metadataPath": "material.bottomLiftSpeedMmMin"
     },
     {
@@ -80,7 +103,7 @@
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 50 },
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 60 },
       "metadataPath": "material.bottomRetractSpeedMmMin"
     },
     {
@@ -95,6 +118,11 @@
       "metadataPath": "material.normalExposureSec"
     },
     {
+      "key": "gapAfterExposure",
+      "kind": "spacer",
+      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 21 }
+    },
+    {
       "key": "liftDistanceMm",
       "label": "Lift Distance (mm)",
       "kind": "number",
@@ -104,6 +132,11 @@
       "step": 0.01,
       "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 30 },
       "metadataPath": "material.liftDistanceMm"
+    },
+    {
+      "key": "gapAfterLiftDistance",
+      "kind": "spacer",
+      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 31 }
     },
     {
       "key": "liftSpeedMmMin",
@@ -126,39 +159,6 @@
       "step": 1,
       "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 50 },
       "metadataPath": "material.retractSpeedMmMin"
-    },
-    {
-      "key": "lightOffDelaySec",
-      "label": "Light-off Delay (s)",
-      "kind": "number",
-      "defaultValue": 1,
-      "min": 0,
-      "max": 120,
-      "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "timing", "cardId": "timing-settings", "order": 10 },
-      "metadataPath": "ctb.lightOffDelaySec"
-    },
-    {
-      "key": "bottomLightOffDelaySec",
-      "label": "Bottom Light-off Delay (s)",
-      "kind": "number",
-      "defaultValue": 0,
-      "min": 0,
-      "max": 120,
-      "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "timing", "cardId": "timing-settings", "order": 20 },
-      "metadataPath": "ctb.bottomLightOffDelaySec"
-    },
-    {
-      "key": "transitionLayerCount",
-      "label": "Transition Layers",
-      "kind": "integer",
-      "defaultValue": 5,
-      "min": 0,
-      "max": 100000,
-      "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 25 },
-      "metadataPath": "ctb.transitionLayerCount"
     },
     {
       "key": "waitTimeBeforeCureSec",

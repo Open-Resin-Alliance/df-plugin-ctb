@@ -1,0 +1,67 @@
+{
+  "$inherit": "simple",
+  "cards": [
+    { "id": "bottom-wait-times", "title": "Bottom Layers", "tabId": "simple", "sectionId": "burn-in", "order": 11 }
+  ],
+  "fields": [
+    {
+      "key": "waitTimeBottomLayerCount",
+      "label": "Bottom Layers For Wait Time",
+      "kind": "number",
+      "defaultValue": 5,
+      "min": 0,
+      "max": 200,
+      "step": 1,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 10 },
+      "metadataPath": "material.waitTimeBottomLayerCount"
+    },
+    {
+      "key": "bottomWaitTimeBeforeCureSec",
+      "label": "Bottom Wait Before Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 120,
+      "step": 0.01,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 20 },
+      "metadataPath": "ctb.bottomWaitTimeBeforeCureSec"
+    },
+    {
+      "key": "bottomWaitTimeAfterCureSec",
+      "label": "Bottom Wait After Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 120,
+      "step": 0.01,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 30 },
+      "metadataPath": "ctb.bottomWaitTimeAfterCureSec"
+    },
+    {
+      "key": "bottomWaitTimeAfterLiftSec",
+      "label": "Bottom Wait After Lift (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 120,
+      "step": 0.01,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 40 },
+      "metadataPath": "ctb.bottomWaitTimeAfterLiftSec"
+    },
+    {
+      "key": "transitionLayerCount",
+      "defaultValue": 0
+    },
+    {
+      "key": "bottomProjectorPwmPercent",
+      "label": "Burn-in Projector PWM (%)",
+      "kind": "number",
+      "defaultValue": 100,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "placement": { "tabId": "simple", "sectionId": "light", "cardId": "light-settings", "order": 75 },
+      "metadataPath": "ctb.bottomLayerProjectorPwmPercent"
+    }
+  ]
+}

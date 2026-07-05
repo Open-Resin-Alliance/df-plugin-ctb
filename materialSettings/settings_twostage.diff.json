@@ -1,0 +1,204 @@
+{
+  "$inherit": "simple",
+  "tabs": [
+    { "id": "twostage", "title": "Two-Stage", "order": 20 }
+  ],
+  "sections": [
+    { "id": "twostage-burn-in-motion", "title": "Burn-In Two-Stage Motion", "tabId": "twostage", "order": 10 },
+    { "id": "twostage-motion", "title": "Two-Stage Motion", "tabId": "twostage", "order": 20 }
+  ],
+  "cards": [
+    { "id": "bottom-wait-times", "title": "Bottom Layers", "tabId": "simple", "sectionId": "burn-in", "order": 11 },
+    { "id": "twostage-burn-in-settings", "title": "Burn-In Two-Stage Motion", "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "order": 10 },
+    { "id": "twostage-settings", "title": "Two-Stage Motion", "tabId": "twostage", "sectionId": "twostage-motion", "order": 20 }
+  ],
+  "fields": [
+    {
+      "key": "waitTimeBottomLayerCount",
+      "label": "Bottom Layers For Wait Time",
+      "kind": "number",
+      "defaultValue": 5,
+      "min": 0,
+      "max": 200,
+      "step": 1,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 10 },
+      "metadataPath": "material.waitTimeBottomLayerCount"
+    },
+    {
+      "key": "bottomWaitTimeBeforeCureSec",
+      "label": "Bottom Wait Before Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 120,
+      "step": 0.01,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 20 },
+      "metadataPath": "ctb.bottomWaitTimeBeforeCureSec"
+    },
+    {
+      "key": "bottomWaitTimeAfterCureSec",
+      "label": "Bottom Wait After Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 120,
+      "step": 0.01,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 30 },
+      "metadataPath": "ctb.bottomWaitTimeAfterCureSec"
+    },
+    {
+      "key": "bottomWaitTimeAfterLiftSec",
+      "label": "Bottom Wait After Lift (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 120,
+      "step": 0.01,
+      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "bottom-wait-times", "order": 40 },
+      "metadataPath": "ctb.bottomWaitTimeAfterLiftSec"
+    },
+    {
+      "key": "transitionLayerCount",
+      "defaultValue": 0
+    },
+    {
+      "key": "bottomProjectorPwmPercent",
+      "label": "Burn-in Projector PWM (%)",
+      "kind": "number",
+      "defaultValue": 100,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "placement": { "tabId": "simple", "sectionId": "light", "cardId": "light-settings", "order": 75 },
+      "metadataPath": "ctb.bottomLayerProjectorPwmPercent"
+    },
+    {
+      "key": "bottomLiftDistanceMm",
+      "defaultValue": 3,
+      "tag": "Slow",
+      "color": "#f59e0b",
+      "splitWithKey": "bottomLiftDistance2Mm",
+      "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 5 },
+      "metadataPath": "ctb.bottomLiftDistanceMm"
+    },
+    {
+      "key": "bottomLiftDistance2Mm",
+      "label": "Burn-In Lift Distance 2 (mm)",
+      "kind": "number",
+      "defaultValue": 4,
+      "tag": "Fast",
+      "color": "#22c55e",
+      "min": 0,
+      "max": 50,
+      "step": 0.01,
+      "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 5 },
+      "metadataPath": "ctb.bottomLiftDistance2Mm"
+    },
+    {
+      "key": "bottomLiftSpeedMmMin",
+      "defaultValue": 60,
+      "tag": "Slow",
+      "color": "#f59e0b",
+      "splitWithKey": "bottomLiftSpeed2MmMin",
+      "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 6 },
+      "metadataPath": "ctb.bottomLiftSpeedMmMin"
+    },
+    {
+      "key": "bottomLiftSpeed2MmMin",
+      "label": "Burn-In Lift Speed 2 (mm/min)",
+      "kind": "number",
+      "defaultValue": 180,
+      "tag": "Fast",
+      "color": "#22c55e",
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 6 },
+      "metadataPath": "ctb.bottomLiftSpeed2MmMin"
+    },
+    {
+      "key": "bottomRetractSpeedMmMin",
+      "defaultValue": 180,
+      "tag": "Fast",
+      "color": "#22c55e",
+      "splitWithKey": "bottomRetractSpeed2MmMin",
+      "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 7 },
+      "metadataPath": "ctb.bottomRetractSpeedMmMin"
+    },
+    {
+      "key": "bottomRetractSpeed2MmMin",
+      "label": "Burn-In Retract Speed 2 (mm/min)",
+      "kind": "number",
+      "defaultValue": 60,
+      "tag": "Slow",
+      "color": "#f59e0b",
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "placement": { "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "cardId": "twostage-burn-in-settings", "order": 7 },
+      "metadataPath": "ctb.bottomRetractSpeed2MmMin"
+    },
+    {
+      "key": "liftDistanceMm",
+      "defaultValue": 1,
+      "tag": "Slow",
+      "color": "#f59e0b",
+      "splitWithKey": "liftDistance2Mm",
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 5 }
+    },
+    {
+      "key": "liftDistance2Mm",
+      "label": "Lift Distance 2 (mm)",
+      "kind": "number",
+      "defaultValue": 4,
+      "tag": "Fast",
+      "color": "#22c55e",
+      "min": 0,
+      "max": 50,
+      "step": 0.01,
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 11 },
+      "metadataPath": "ctb.liftDistance2Mm"
+    },
+    {
+      "key": "liftSpeedMmMin",
+      "tag": "Slow",
+      "color": "#f59e0b",
+      "splitWithKey": "liftSpeed2MmMin",
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 6 }
+    },
+    {
+      "key": "liftSpeed2MmMin",
+      "label": "Lift Speed 2 (mm/min)",
+      "kind": "number",
+      "defaultValue": 240,
+      "tag": "Fast",
+      "color": "#22c55e",
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 21 },
+      "metadataPath": "ctb.liftSpeed2MmMin"
+    },
+    {
+      "key": "retractSpeedMmMin",
+      "defaultValue": 240,
+      "tag": "Fast",
+      "color": "#22c55e",
+      "splitWithKey": "retractSpeed2MmMin",
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 7 }
+    },
+    {
+      "key": "retractSpeed2MmMin",
+      "label": "Retract Speed 2 (mm/min)",
+      "kind": "number",
+      "defaultValue": 60,
+      "tag": "Slow",
+      "color": "#f59e0b",
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "placement": { "tabId": "twostage", "sectionId": "twostage-motion", "cardId": "twostage-settings", "order": 41 },
+      "metadataPath": "ctb.retractSpeed2MmMin"
+    }
+  ]
+}
