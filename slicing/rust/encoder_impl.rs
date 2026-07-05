@@ -889,7 +889,6 @@ mod tests {
     fn make_test_job() -> SliceJobV3 {
         SliceJobV3 {
             output_format: ".ctb".to_string(),
-            format_version: None,
             source_width_px: 4,
             source_height_px: 4,
             width_px: 4,
@@ -898,30 +897,9 @@ mod tests {
             build_depth_mm: 20.0,
             layer_height_mm: 0.05,
             total_layers: 2,
-            export_thumbnail_png_base64: None,
-            png_compression_strategy: "balanced".to_string(),
-            container_compression_level: 2,
             anti_aliasing_level: "Off".to_string(),
-            anti_aliasing_mode: "Blur".to_string(),
-            blur_brush_radius_px: 1,
-            z_blur_radius_layers: 0,
-            aa_on_supports: false,
-            model_triangle_count: 0,
-            minimum_aa_alpha_percent: 35.0,
-            mirror_x: false,
-            mirror_y: false,
-            z_blend_look_back: 2,
-            z_blend_fade_px: 20,
-            z_blend_auto_fade: true,
-            z_blend_minimum_alpha_percent: 0.0,
-            z_blend_max_alpha_percent: 90.0,
-            z_blend_custom_lut: None,
-            zaa_kernel: None,
-            zaa_pattern: None,
-            zaa_duplicate_z: None,
-            triangles_xyz: vec![],
             metadata_json: "{}".to_string(),
-            x_packing_mode: "none".to_string(),
+            ..Default::default()
         }
     }
 

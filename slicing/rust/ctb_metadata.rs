@@ -144,6 +144,7 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
 
     // Beta one step for S4U tilting + bottom wait times 
     let is_beta_simple_mode = matches!(settings_mode.as_deref(), Some("betaonestep"));
+    let is_tilting_mode = matches!(settings_mode.as_deref(), Some("tilting"));
 
 
     let read_f32 = |key: &str| {
@@ -312,6 +313,15 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
         timing.bottom_lift_speed2_mm_min = 0.0;
         timing.bottom_retract_speed2_mm_min = 0.0;
         timing.bottom_retract_height2_mm = 0.0;
+    }
+
+    if is_tilting_mode {
+        timing.lift_speed_mm_min = 60.0;
+        timing.bottom_lift_speed_mm_min = 60.0;
+        timing.retract_speed_mm_min = 150.0;
+        timing.bottom_retract_speed_mm_min = 150.0;
+        timing.lift_distance_mm = read_f32("layerHeightMm");
+        timing.bottom_lift_distance_mm = read_f32("layerHeightMm");
     }
 
     timing
