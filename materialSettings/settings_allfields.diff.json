@@ -1,12 +1,12 @@
 {
   "$inherit": "simple",
   "cards": [
-    { "id": "bottom-wait-times", "title": "Bottom Layers", "tabId": "simple", "sectionId": "burn-in", "order": 11 }
+    { "id": "bottom-wait-times", "title": "Extended Wait Time", "tabId": "simple", "sectionId": "burn-in", "order": 11 }
   ],
   "fields": [
     {
       "key": "waitTimeBottomLayerCount",
-      "label": "Bottom Layers For Wait Time",
+      "label": "Extended Wait Time Layers From Bottom",
       "kind": "number",
       "defaultValue": 5,
       "min": 0,
@@ -17,7 +17,7 @@
     },
     {
       "key": "bottomWaitTimeBeforeCureSec",
-      "label": "Bottom Wait Before Cure (s)",
+      "label": "Extended Wait Before Cure (s)",
       "kind": "number",
       "defaultValue": 0,
       "min": 0,
@@ -28,7 +28,7 @@
     },
     {
       "key": "bottomWaitTimeAfterCureSec",
-      "label": "Bottom Wait After Cure (s)",
+      "label": "Extended Wait After Cure (s)",
       "kind": "number",
       "defaultValue": 0,
       "min": 0,
@@ -39,7 +39,7 @@
     },
     {
       "key": "bottomWaitTimeAfterLiftSec",
-      "label": "Bottom Wait After Lift (s)",
+      "label": "Extended Wait After Lift (s)",
       "kind": "number",
       "defaultValue": 0,
       "min": 0,
