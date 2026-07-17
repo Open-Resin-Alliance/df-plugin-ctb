@@ -1,5 +1,6 @@
 [dependencies]
 # Add CTB-specific crates as implementation progresses.
+tempfile = "3"
 
 [optional-dependencies]
 

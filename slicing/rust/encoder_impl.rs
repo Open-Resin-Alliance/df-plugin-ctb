@@ -18,7 +18,11 @@ use ctb_layout::{
     encode_single_ctb_empty_layer, encode_single_ctb_layer_from_raw_mask, prepare_layers_for_ctb,
     prepare_layers_for_ctb_with_progress,
 };
-use ctb_metadata::{parse_ctb_build_model_from_job, parse_threshold_from_metadata};
+use ctb_metadata::{
+    parse_ctb_build_model_from_job, parse_ctb_format_version_hint_from_job,
+    parse_threshold_from_metadata,
+};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -195,14 +199,126 @@ impl RawMaskStreamEncoder for CtbRawMaskStreamingEncoder {
 
 /// Sequential RLE streaming encoder: receives `Vec<RleRun>` per layer (already
 /// rasterized by `rasterize_layer_rle`), converts directly to CTB RLE, and
-/// assembles the container in `finalize_to_bytes` — zero pixel-buffer overhead.
+/// streams the already-encoded payload straight to a scratch file as each
+/// layer arrives.
+///
+/// Only a lightweight `CtbLayerRecord` (index + encoded length) is kept in
+/// memory per layer for the whole job — never the payload bytes. That's what
+/// stops 3DAA laminations at 16k+ resolution from accumulating gigabytes of
+/// encoded-but-unwritten layer data in RAM over the course of a job (the
+/// previous `prepared: Vec<CtbPreparedLayer>` design held every layer's bytes
+/// until the very end).
+///
+/// Layers can arrive out of order — 3DAA's post pipeline dispatches each
+/// layer's encoding as an independent parallel task — but the scratch file
+/// needs them written in strict index order, since each layer's on-disk
+/// offset is the running sum of every *prior* layer's length. `pending`
+/// stages out-of-order arrivals; in practice it never grows beyond the
+/// pipeline's own small reordering window.
 struct CtbRleStreamingEncoder {
     job: SliceJobV3,
     layer_xor_key: u32,
     is_anti_aliased: bool,
     threshold: u8,
     total_pixels: usize,
-    prepared: Vec<ctb_types::CtbPreparedLayer>,
+    total_layers: usize,
+    payload_file: std::fs::File,
+    next_index: usize,
+    pending: std::collections::BTreeMap<usize, (ctb_types::CtbLayerRecord, Vec<u8>)>,
+    records: Vec<ctb_types::CtbLayerRecord>,
+    io_error: Option<SlicerV3Error>,
+}
+
+impl CtbRleStreamingEncoder {
+    fn new(
+        job: &SliceJobV3,
+        layer_xor_key: u32,
+        is_anti_aliased: bool,
+        threshold: u8,
+        total_pixels: usize,
+    ) -> Result<Self, SlicerV3Error> {
+        Ok(Self {
+            job: job.clone(),
+            layer_xor_key,
+            is_anti_aliased,
+            threshold,
+            total_pixels,
+            total_layers: job.total_layers as usize,
+            payload_file: tempfile::tempfile()?,
+            next_index: 0,
+            pending: std::collections::BTreeMap::new(),
+            records: Vec::with_capacity(job.total_layers as usize),
+            io_error: None,
+        })
+    }
+
+    fn on_layer_encoded(&mut self, layer_index: usize, encoded: Vec<u8>) {
+        if self.io_error.is_some() {
+            return;
+        }
+        let record = ctb_types::CtbLayerRecord {
+            index: layer_index,
+            source_len: self.total_pixels,
+            encoded_len: encoded.len() as u32,
+        };
+        self.pending.insert(layer_index, (record, encoded));
+
+        while let Some((&idx, _)) = self.pending.iter().next() {
+            if idx != self.next_index {
+                break;
+            }
+            let (record, bytes) = self.pending.remove(&idx).expect("checked above");
+            if let Err(err) = self.payload_file.write_all(&bytes) {
+                self.io_error = Some(SlicerV3Error::from(err));
+                return;
+            }
+            self.records.push(record);
+            self.next_index += 1;
+        }
+    }
+
+    /// Verifies every layer 0..total_layers was written in order, with
+    /// nothing left staged out-of-order, and surfaces any deferred I/O error
+    /// from `store_encoded_layer` (which can't propagate errors directly —
+    /// see its `RleStreamEncoder` signature).
+    fn finish(&mut self) -> Result<(), SlicerV3Error> {
+        if let Some(err) = self.io_error.take() {
+            return Err(err);
+        }
+        if self.next_index != self.total_layers || !self.pending.is_empty() {
+            return Err(SlicerV3Error::MissingRenderedLayerPayload(format!(
+                "CTB streaming encoder finished with {} of {} layers written ({} layer(s) still buffered out of order)",
+                self.next_index,
+                self.total_layers,
+                self.pending.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reads the scratch file back into memory and reconstructs the
+    /// `CtbPreparedLayer` list the existing (non-streaming) container
+    /// builders expect. Used by `finalize_to_bytes` and by the encrypted
+    /// `finalize_to_path` fallback, neither of which is the hot path for
+    /// large desktop exports.
+    fn read_back_prepared(&mut self) -> Result<Vec<ctb_types::CtbPreparedLayer>, SlicerV3Error> {
+        self.payload_file.seek(std::io::SeekFrom::Start(0))?;
+        let mut payload_bytes = Vec::new();
+        self.payload_file.read_to_end(&mut payload_bytes)?;
+
+        let mut prepared = Vec::with_capacity(self.records.len());
+        let mut cursor = 0usize;
+        for record in &self.records {
+            let end = cursor + record.encoded_len as usize;
+            prepared.push(ctb_types::CtbPreparedLayer {
+                index: record.index,
+                source_len: record.source_len,
+                encoded: payload_bytes[cursor..end].to_vec(),
+            });
+            cursor = end;
+        }
+        Ok(prepared)
+    }
 }
 
 impl RleStreamEncoder for CtbRleStreamingEncoder {
@@ -238,22 +354,63 @@ impl RleStreamEncoder for CtbRleStreamingEncoder {
         }
 
         ctb_layout::ctb_layer_rle_xor(self.layer_xor_key, layer_index, &mut encoded);
-        self.prepared.push(ctb_types::CtbPreparedLayer {
-            index: layer_index as usize,
-            source_len: self.total_pixels,
-            encoded,
-        });
+        self.on_layer_encoded(layer_index as usize, encoded);
+        if let Some(err) = self.io_error.take() {
+            return Err(err);
+        }
         Ok(())
     }
 
     fn finalize_to_bytes(mut self: Box<Self>) -> Result<Vec<u8>, SlicerV3Error> {
-        if self.prepared.is_empty() {
+        self.finish()?;
+        if self.records.is_empty() {
             return Err(SlicerV3Error::MissingRenderedLayerPayload(
                 "no rendered layers were provided for CTB RLE encoding".to_string(),
             ));
         }
-        self.prepared.sort_unstable_by_key(|p| p.index);
-        build_ctb_container_bytes(&self.job, &self.prepared)
+        let prepared = self.read_back_prepared()?;
+        build_ctb_container_bytes(&self.job, &prepared)
+    }
+
+    /// Streams the container straight to `output_path` without ever holding
+    /// the full encoded file in RAM — this is the path the desktop app uses
+    /// for real exports (`slice_with_progress_v3_to_path`).
+    ///
+    /// Only the non-encrypted CTB v5 layout is streamed this way: its layer
+    /// offsets are purely forward-computable, so the header, the layer
+    /// descriptor table, and the (potentially huge) payload region can all be
+    /// written in one forward pass. The encrypted (v5enc) layout patches a
+    /// layer-pointer table and settings block after the fact, which needs
+    /// random access — that variant falls back to the same in-memory
+    /// assembly as `finalize_to_bytes`, just written to `output_path`
+    /// afterwards. Either way, the sustained per-layer growth during
+    /// lamination is gone; only encrypted jobs still pay a one-time,
+    /// end-of-job buffering cost for the final container.
+    fn finalize_to_path(mut self: Box<Self>, output_path: &Path) -> Result<(), SlicerV3Error> {
+        self.finish()?;
+        if self.records.is_empty() {
+            return Err(SlicerV3Error::MissingRenderedLayerPayload(
+                "no rendered layers were provided for CTB RLE encoding".to_string(),
+            ));
+        }
+
+        let force_encrypted = parse_ctb_format_version_hint_from_job(&self.job)
+            .map(|(_, is_encrypted)| is_encrypted)
+            .unwrap_or(false);
+
+        if force_encrypted {
+            let prepared = self.read_back_prepared()?;
+            let bytes = build_ctb_container_bytes(&self.job, &prepared)?;
+            std::fs::write(output_path, bytes)?;
+            return Ok(());
+        }
+
+        self.payload_file.seek(std::io::SeekFrom::Start(0))?;
+        let reader = std::io::BufReader::new(&mut self.payload_file);
+        let mut writer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
+        ctb_encoder::write_ctb_v5_container(&self.job, &self.records, reader, &mut writer, None)?;
+        writer.flush()?;
+        Ok(())
     }
 
     fn parallel_encode_fn(
@@ -298,11 +455,7 @@ impl RleStreamEncoder for CtbRleStreamingEncoder {
     }
 
     fn store_encoded_layer(&mut self, layer_index: u32, bytes: Vec<u8>) {
-        self.prepared.push(ctb_types::CtbPreparedLayer {
-            index: layer_index as usize,
-            source_len: self.total_pixels,
-            encoded: bytes,
-        });
+        self.on_layer_encoded(layer_index as usize, bytes);
     }
 }
 
@@ -418,14 +571,13 @@ impl FormatEncoder for CtbPluginEncoder {
         let is_anti_aliased = job.produces_grayscale_output();
         let total_pixels =
             (job.source_width_px as usize).saturating_mul(job.source_height_px as usize);
-        Ok(Some(Box::new(CtbRleStreamingEncoder {
-            job: job.clone(),
-            layer_xor_key: build.layer_xor_key,
+        Ok(Some(Box::new(CtbRleStreamingEncoder::new(
+            job,
+            build.layer_xor_key,
             is_anti_aliased,
             threshold,
             total_pixels,
-            prepared: Vec::with_capacity(job.total_layers as usize),
-        })))
+        )?)))
     }
 
     fn estimate_encode_progress_units(&self, rendered_layers: &RenderedLayersV3) -> u32 {
@@ -882,8 +1034,9 @@ mod tests {
         build_ctb_container_bytes, ctb_layer_rle_xor, ctb_preview,
         decode_embedded_disclaimer_bytes, normalize_to_binary_mask, parse_ctb_build_model_from_job,
         parse_threshold_from_metadata, push_ctb_run, rle_encode_mask_row_major, CtbPreparedLayer,
-        CTB_DISCLAIMER_SIZE, CTB_HEADER_SIZE,
+        CtbRleStreamingEncoder, CTB_DISCLAIMER_SIZE, CTB_HEADER_SIZE,
     };
+    use crate::encoders::RleStreamEncoder;
     use crate::types::SliceJobV3;
 
     fn make_test_job() -> SliceJobV3 {
@@ -1523,5 +1676,93 @@ mod tests {
             .expect("invalid legacy aes fields are ignored");
         let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(magic, 0x12FD_0107);
+    }
+
+    #[test]
+    fn streaming_encoder_finalize_to_path_matches_finalize_to_bytes() {
+        let mut job = make_test_job();
+        job.total_layers = 3;
+        let total_pixels =
+            (job.source_width_px as usize).saturating_mul(job.source_height_px as usize);
+        let layer_bytes = |n: u8| vec![0x80u8, 0x03, n];
+
+        let mut path_encoder =
+            CtbRleStreamingEncoder::new(&job, 0x1234_5678, true, 127, total_pixels)
+                .expect("encoder should construct");
+        for i in 0..3u32 {
+            path_encoder.store_encoded_layer(i, layer_bytes(i as u8 + 1));
+        }
+        let tmp = tempfile::NamedTempFile::new().expect("temp output path");
+        Box::new(path_encoder)
+            .finalize_to_path(tmp.path())
+            .expect("finalize_to_path should succeed");
+        let path_bytes = std::fs::read(tmp.path()).expect("read streamed output");
+
+        let mut bytes_encoder =
+            CtbRleStreamingEncoder::new(&job, 0x1234_5678, true, 127, total_pixels)
+                .expect("encoder should construct");
+        for i in 0..3u32 {
+            bytes_encoder.store_encoded_layer(i, layer_bytes(i as u8 + 1));
+        }
+        let mem_bytes = Box::new(bytes_encoder)
+            .finalize_to_bytes()
+            .expect("finalize_to_bytes should succeed");
+
+        assert_eq!(
+            path_bytes, mem_bytes,
+            "streaming finalize_to_path and in-memory finalize_to_bytes must produce byte-identical containers"
+        );
+    }
+
+    #[test]
+    fn streaming_encoder_handles_out_of_order_store_encoded_layer() {
+        let mut job = make_test_job();
+        job.total_layers = 5;
+        let total_pixels =
+            (job.source_width_px as usize).saturating_mul(job.source_height_px as usize);
+        let layer_bytes = |n: u8| vec![0x80u8, 0x03, n];
+
+        let mut ordered = CtbRleStreamingEncoder::new(&job, 0xABCD, true, 127, total_pixels)
+            .expect("encoder should construct");
+        for i in 0..5u32 {
+            ordered.store_encoded_layer(i, layer_bytes(i as u8 + 1));
+        }
+        let ordered_bytes = Box::new(ordered)
+            .finalize_to_bytes()
+            .expect("ordered finalize should succeed");
+
+        let mut scrambled = CtbRleStreamingEncoder::new(&job, 0xABCD, true, 127, total_pixels)
+            .expect("encoder should construct");
+        for &i in &[2u32, 0, 1, 4, 3] {
+            scrambled.store_encoded_layer(i, layer_bytes(i as u8 + 1));
+        }
+        let scrambled_bytes = Box::new(scrambled)
+            .finalize_to_bytes()
+            .expect("scrambled finalize should succeed");
+
+        assert_eq!(
+            ordered_bytes, scrambled_bytes,
+            "out-of-order store_encoded_layer arrivals must still produce an index-ordered container"
+        );
+    }
+
+    #[test]
+    fn streaming_encoder_rejects_missing_layer_at_finalize() {
+        let mut job = make_test_job();
+        job.total_layers = 3;
+        let total_pixels =
+            (job.source_width_px as usize).saturating_mul(job.source_height_px as usize);
+
+        let mut encoder = CtbRleStreamingEncoder::new(&job, 0xABCD, true, 127, total_pixels)
+            .expect("encoder should construct");
+        // Only 2 of the 3 expected layers arrive (index 1 is missing).
+        encoder.store_encoded_layer(0, vec![0x80, 0x03, 1]);
+        encoder.store_encoded_layer(2, vec![0x80, 0x03, 3]);
+
+        let result = Box::new(encoder).finalize_to_bytes();
+        assert!(
+            result.is_err(),
+            "finalize should fail when a layer is missing rather than silently emitting a truncated container"
+        );
     }
 }

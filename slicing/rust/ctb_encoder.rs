@@ -13,15 +13,16 @@ use super::ctb_metadata::{
 use super::ctb_preview::build_previews;
 use super::ctb_preview::write_preview_record;
 use super::ctb_types::{
-    CtbBuildModel, CtbExtendedOffsets, CtbPreparedLayer, CtbPreviewOffsets, CtbResinModel,
-    CtbResinPayload, CtbTimingModel, CTB_DISCLAIMER_SIZE, CTB_HEADER_SIZE, CTB_LAYER_DEF_EX_SIZE,
-    CTB_LAYER_DEF_SIZE, CTB_MAGIC_V2_V3, CTB_MAGIC_V4_V5, CTB_PREVIEW_RECORD_SIZE,
-    CTB_PRINT_PARAMETERS_SIZE, CTB_PRINT_PARAMETERS_V4_RESERVED_SIZE, CTB_PRINT_PARAMETERS_V4_SIZE,
-    CTB_SLICER_INFO_FIXED_SIZE,
+    CtbBuildModel, CtbExtendedOffsets, CtbLayerRecord, CtbPreparedLayer, CtbPreviewOffsets,
+    CtbResinModel, CtbResinPayload, CtbTimingModel, CTB_DISCLAIMER_SIZE, CTB_HEADER_SIZE,
+    CTB_LAYER_DEF_EX_SIZE, CTB_LAYER_DEF_SIZE, CTB_MAGIC_V2_V3, CTB_MAGIC_V4_V5,
+    CTB_PREVIEW_RECORD_SIZE, CTB_PRINT_PARAMETERS_SIZE, CTB_PRINT_PARAMETERS_V4_RESERVED_SIZE,
+    CTB_PRINT_PARAMETERS_V4_SIZE, CTB_SLICER_INFO_FIXED_SIZE,
     CTB_ENCRYPTED_LAYER_DEF_SIZE, CTB_ENCRYPTED_SETTINGS_OFFSET, CTB_ENCRYPTED_SETTINGS_SIZE, CTB_MAGIC_V5_ENCRYPTED, CTB_ENCRYPTED_HEADER_SIZE
 };
 use sha2::{Digest, Sha256};
 use super::ctb_crypto::{ctb_default_key_iv, ctb_encrypt_in_place_no_padding};
+use std::io::{Read, Write};
 
 struct CtbVersionCaps {
     magic: u32,
@@ -300,18 +301,23 @@ enum LayerDefLayout {
 
 //TODO generalize function
 fn interpolate_transition_layer_exposure(
-    layer: &CtbPreparedLayer,
+    layer_index: usize,
     timing: &CtbTimingModel
 ) -> f32 {
-    return timing.bottom_exposure_sec 
-        - (timing.bottom_exposure_sec - timing.normal_exposure_sec) 
-            / (timing.transition_layer_count as f32) 
-            * (layer.index as u32 - timing.bottom_layer_count + 1) as f32;
+    return timing.bottom_exposure_sec
+        - (timing.bottom_exposure_sec - timing.normal_exposure_sec)
+            / (timing.transition_layer_count as f32)
+            * (layer_index as u32 - timing.bottom_layer_count + 1) as f32;
 }
 
+/// Writes one layer's descriptor record. Only needs the layer's index and its
+/// encoded payload length — never the payload bytes themselves — so it works
+/// uniformly for the in-memory `CtbPreparedLayer` path and the streaming
+/// `CtbLayerRecord` path.
 fn write_layer_def_ex(
     out: &mut Vec<u8>,
-    layer: &CtbPreparedLayer,
+    layer_index: usize,
+    encoded_len: u32,
     position_z_mm: f32,
     timing: CtbTimingModel,
     layer_data_abs_offset: u64,
@@ -334,7 +340,7 @@ fn write_layer_def_ex(
         }
     };
 
-    let is_bottom_wait = (layer.index as u32) < timing.wait_time_bottom_layer_count;
+    let is_bottom_wait = (layer_index as u32) < timing.wait_time_bottom_layer_count;
 
     // Use bottom lift distance for bottom layers, normal for others
     let lift_distance = if is_bottom {
@@ -390,8 +396,8 @@ fn write_layer_def_ex(
     let exposure_sec = if is_bottom {
         timing.bottom_exposure_sec
     } else {
-        if (layer.index as u32) < (timing.bottom_layer_count + timing.transition_layer_count as u32) {
-                interpolate_transition_layer_exposure(layer, &timing)
+        if (layer_index as u32) < (timing.bottom_layer_count + timing.transition_layer_count as u32) {
+                interpolate_transition_layer_exposure(layer_index, &timing)
             } else { timing.normal_exposure_sec } //Layer exposure time
     };
     let light_off_sec = if is_bottom {
@@ -417,7 +423,7 @@ fn write_layer_def_ex(
             push_f32(out, light_off_sec);
             push_u32(out, data_offset);
             push_u32(out, page_number);
-            push_u32(out, layer.encoded.len() as u32);
+            push_u32(out, encoded_len);
             push_u32(out, 0); push_u32(out, 0); push_u32(out, 0);
         }
         LayerDefLayout::Basic | LayerDefLayout::Extended => {
@@ -425,7 +431,7 @@ fn write_layer_def_ex(
             push_f32(out, exposure_sec);
             push_f32(out, light_off_sec);
             push_u32(out, data_offset);
-            push_u32(out, layer.encoded.len() as u32);
+            push_u32(out, encoded_len);
             push_u32(out, page_number);
             push_u32(out, table_size);
             push_u32(out, 0); push_u32(out, 0);
@@ -433,7 +439,7 @@ fn write_layer_def_ex(
             if matches!(layout, LayerDefLayout::Basic) {
                 return;
             }
-            push_u32(out, table_size + layer.encoded.len() as u32);
+            push_u32(out, table_size + encoded_len);
         }
     }
 
@@ -481,6 +487,43 @@ pub(super) fn build_ctb_container_bytes_with_progress(
     prepared: &[CtbPreparedLayer],
     on_progress: Option<&dyn Fn(u32, u32)>,
 ) -> Result<Vec<u8>, SlicerV3Error> {
+    let records: Vec<CtbLayerRecord> = prepared
+        .iter()
+        .map(|p| CtbLayerRecord {
+            index: p.index,
+            source_len: p.source_len,
+            encoded_len: p.encoded.len() as u32,
+        })
+        .collect();
+    let mut payload = Vec::with_capacity(prepared.iter().map(|p| p.encoded.len()).sum());
+    for layer in prepared {
+        payload.extend_from_slice(&layer.encoded);
+    }
+    let mut out = Vec::new();
+    write_ctb_v5_container(job, &records, payload.as_slice(), &mut out, on_progress)?;
+    Ok(out)
+}
+
+/// Writes a complete non-encrypted CTB v5 container to `out`.
+///
+/// The header/preview/parameter sections are always small and fixed-size, so
+/// they're built as an in-memory `Vec<u8>` as before — that's not where the
+/// memory problem is. The layer *payload* region is the only part that can be
+/// gigabytes for large/high-res jobs, so it's the only part streamed through
+/// generically: `payload_source` is read sequentially, one layer's worth of
+/// bytes at a time (`records[i].encoded_len`), and copied straight into `out`
+/// without ever buffering the whole payload region in RAM. Passing a
+/// `Vec<u8>` for both `out` and `payload_source` reproduces the old
+/// all-in-memory behavior exactly (used by `build_ctb_container_bytes_with_progress`
+/// above); passing a `BufWriter<File>`/`BufReader<File>` pair streams straight
+/// to disk (used by `CtbRleStreamingEncoder::finalize_to_path`).
+pub(super) fn write_ctb_v5_container<W: Write>(
+    job: &SliceJobV3,
+    records: &[CtbLayerRecord],
+    mut payload_source: impl Read,
+    out: &mut W,
+    on_progress: Option<&dyn Fn(u32, u32)>,
+) -> Result<(), SlicerV3Error> {
     let timing = parse_timing_model_from_metadata(&job.metadata_json);
     let build = parse_ctb_build_model_from_job(job);
     let caps = ctb_version_caps(build.version);
@@ -494,7 +537,7 @@ pub(super) fn build_ctb_container_bytes_with_progress(
     }
     let machine_name_size = machine_name_bytes.len() as u32;
 
-    let layer_count = prepared.len() as u32;
+    let layer_count = records.len() as u32;
 
     let mut offset = CTB_HEADER_SIZE;
 
@@ -543,19 +586,16 @@ pub(super) fn build_ctb_container_bytes_with_progress(
 
     let layers_definition_offset = offset;
 
-    let mut layer_defs_data = Vec::with_capacity(prepared.len() * CTB_LAYER_DEF_EX_SIZE as usize);
-    let mut layer_payload_data = Vec::new();
-
-    let print_time_sec = compute_print_time_seconds(prepared.len(), timing);
+    let print_time_sec = compute_print_time_seconds(records.len(), timing);
 
     let preview_offsets = CtbPreviewOffsets {
         large_record_offset: large_preview_record_offset,
         small_record_offset: small_preview_record_offset,
     };
 
-    let mut out = Vec::new();
+    let mut header = Vec::new();
     write_ctb_header(
-        &mut out,
+        &mut header,
         caps.magic,
         build.version,
         job,
@@ -570,35 +610,35 @@ pub(super) fn build_ctb_container_bytes_with_progress(
         slicer_size,
     );
 
-    assert_eq!(out.len(), CTB_HEADER_SIZE as usize);
+    assert_eq!(header.len(), CTB_HEADER_SIZE as usize);
 
     write_preview_record(
-        &mut out,
+        &mut header,
         previews[0].width,
         previews[0].height,
         large_preview_image_offset,
         previews[0].encoded.len() as u32,
     );
-    out.extend_from_slice(&previews[0].encoded);
+    header.extend_from_slice(&previews[0].encoded);
 
     write_preview_record(
-        &mut out,
+        &mut header,
         previews[1].width,
         previews[1].height,
         small_preview_image_offset,
         previews[1].encoded.len() as u32,
     );
-    out.extend_from_slice(&previews[1].encoded);
+    header.extend_from_slice(&previews[1].encoded);
 
-    write_ctb_print_parameters(&mut out, timing);
+    write_ctb_print_parameters(&mut header, timing);
     assert_eq!(
-        out.len(),
+        header.len(),
         print_parameters_offset as usize + CTB_PRINT_PARAMETERS_SIZE as usize
     );
 
     let pls_flag = if build.per_layer_settings { caps.per_layer_settings_active_flag } else { 0x00 };
     write_ctb_slicer_info_fixed(
-        &mut out,
+        &mut header,
         &build,
         timing,
         machine_name_offset,
@@ -606,67 +646,102 @@ pub(super) fn build_ctb_container_bytes_with_progress(
         extended_offsets.print_parameters_v4_offset,
         pls_flag,
     );
-    assert_eq!(out.len(), slicer_offset as usize + slicer_size as usize);
+    assert_eq!(header.len(), slicer_offset as usize + slicer_size as usize);
 
-    out.extend_from_slice(&machine_name_bytes);
+    header.extend_from_slice(&machine_name_bytes);
     assert_eq!(
-        out.len(),
+        header.len(),
         machine_name_offset as usize + machine_name_size as usize
     );
 
     if caps.print_params_v4 {
-        push_bytes_padded(&mut out, &disclaimer_bytes, CTB_DISCLAIMER_SIZE);
+        push_bytes_padded(&mut header, &disclaimer_bytes, CTB_DISCLAIMER_SIZE);
         assert_eq!(
-            out.len(),
+            header.len(),
             extended_offsets.disclaimer_offset as usize + CTB_DISCLAIMER_SIZE
         );
 
-        write_ctb_print_parameters_v4(&mut out, timing, layer_count, extended_offsets);
+        write_ctb_print_parameters_v4(&mut header, timing, layer_count, extended_offsets);
         assert_eq!(
-            out.len(),
+            header.len(),
             extended_offsets.print_parameters_v4_offset as usize
                 + CTB_PRINT_PARAMETERS_V4_SIZE as usize
         );
 
         if caps.resin_params {
             write_ctb_resin_parameters(
-                &mut out,
+                &mut header,
                 extended_offsets.resin_parameters_offset,
                 &resin_payload,
                 &resin,
             );
             assert_eq!(
-                out.len(),
+                header.len(),
                 extended_offsets.resin_parameters_offset as usize
                     + resin_payload_len(&resin_payload) as usize
             );
         }
     }
 
-    assert_eq!(out.len(), layers_definition_offset as usize);
+    assert_eq!(header.len(), layers_definition_offset as usize);
+    out.write_all(&header)?;
 
     let layer_def_record_size = CTB_LAYER_DEF_SIZE as usize;
-    let layer_defs_total_size = prepared.len() * layer_def_record_size;
+    let layer_defs_total_size = records.len() * layer_def_record_size;
     let layer_data_start_abs = (layers_definition_offset as u64) + (layer_defs_total_size as u64);
 
-    let total_prepared = prepared.len() as u32;
-    for (idx, layer) in prepared.iter().enumerate() {
-        let layer_data_blob_abs = layer_data_start_abs + (layer_payload_data.len() as u64);
-        let layer_data_abs = if caps.extended_layer_def {
+    let layer_defs_data = build_ctb_v5_layer_defs(
+        records,
+        caps.extended_layer_def,
+        timing,
+        job,
+        layer_data_start_abs,
+    );
+    out.write_all(&layer_defs_data)?;
+
+    write_ctb_v5_payloads(
+        out,
+        records,
+        caps.extended_layer_def,
+        timing,
+        job,
+        layer_data_start_abs,
+        &mut payload_source,
+        on_progress,
+    )?;
+
+    Ok(())
+}
+
+/// First pass over `records`: builds the compact layer-descriptor table that
+/// sits right after the header (`layers_definition_offset`). Cheap even for
+/// tens of thousands of layers — it only needs each record's index and
+/// encoded length, never the payload bytes.
+fn build_ctb_v5_layer_defs(
+    records: &[CtbLayerRecord],
+    extended: bool,
+    timing: CtbTimingModel,
+    job: &SliceJobV3,
+    layer_data_start_abs: u64,
+) -> Vec<u8> {
+    let mut layer_defs_data = Vec::with_capacity(records.len() * CTB_LAYER_DEF_EX_SIZE as usize);
+    let mut running_len: u64 = 0;
+    for record in records {
+        let layer_data_blob_abs = layer_data_start_abs + running_len;
+        let layer_data_abs = if extended {
             layer_data_blob_abs + CTB_LAYER_DEF_EX_SIZE as u64
         } else {
             layer_data_blob_abs
         };
-
-        let position_z_mm = (layer.index as f32 + 1.0) * job.layer_height_mm;
+        let position_z_mm = (record.index as f32 + 1.0) * job.layer_height_mm;
+        let is_bottom = (record.index as u32) < timing.bottom_layer_count;
+        let layout = if extended { LayerDefLayout::Extended } else { LayerDefLayout::Basic };
 
         let mut layer_def_bytes = Vec::new();
-
-        let is_bottom = (layer.index as u32) < timing.bottom_layer_count;
-        let layout = if caps.extended_layer_def { LayerDefLayout::Extended } else { LayerDefLayout::Basic };
         write_layer_def_ex(
             &mut layer_def_bytes,
-            layer,
+            record.index,
+            record.encoded_len,
             position_z_mm,
             timing,
             layer_data_abs,
@@ -674,24 +749,71 @@ pub(super) fn build_ctb_container_bytes_with_progress(
             is_bottom,
         );
 
-        if caps.extended_layer_def {
+        if extended {
             layer_defs_data.extend_from_slice(&layer_def_bytes[..CTB_LAYER_DEF_SIZE as usize]);
-            layer_payload_data.extend_from_slice(&layer_def_bytes);
         } else {
             layer_defs_data.extend_from_slice(&layer_def_bytes);
         }
 
-        layer_payload_data.extend_from_slice(&layer.encoded);
+        running_len += record.encoded_len as u64;
+    }
+    layer_defs_data
+}
+
+/// Second pass over `records`: streams the layer payload region (the only
+/// part that can be gigabytes) straight from `payload_source` into `out`,
+/// one layer at a time, recomputing the same offsets as
+/// `build_ctb_v5_layer_defs` (cheap pure arithmetic — recomputing it is far
+/// cheaper than threading it through as extra state). For the "extended"
+/// layer-def layout, each layer's full descriptor record is repeated right
+/// before its payload bytes, matching the original in-memory implementation.
+fn write_ctb_v5_payloads<W: Write>(
+    out: &mut W,
+    records: &[CtbLayerRecord],
+    extended: bool,
+    timing: CtbTimingModel,
+    job: &SliceJobV3,
+    layer_data_start_abs: u64,
+    payload_source: &mut impl Read,
+    on_progress: Option<&dyn Fn(u32, u32)>,
+) -> Result<(), SlicerV3Error> {
+    let total = records.len() as u32;
+    let mut running_len: u64 = 0;
+    for (idx, record) in records.iter().enumerate() {
+        let layer_data_blob_abs = layer_data_start_abs + running_len;
+        let layer_data_abs = if extended {
+            layer_data_blob_abs + CTB_LAYER_DEF_EX_SIZE as u64
+        } else {
+            layer_data_blob_abs
+        };
+
+        if extended {
+            let position_z_mm = (record.index as f32 + 1.0) * job.layer_height_mm;
+            let is_bottom = (record.index as u32) < timing.bottom_layer_count;
+            let mut layer_def_bytes = Vec::new();
+            write_layer_def_ex(
+                &mut layer_def_bytes,
+                record.index,
+                record.encoded_len,
+                position_z_mm,
+                timing,
+                layer_data_abs,
+                LayerDefLayout::Extended,
+                is_bottom,
+            );
+            out.write_all(&layer_def_bytes)?;
+        }
+
+        let mut limited = payload_source.take(record.encoded_len as u64);
+        std::io::copy(&mut limited, out)?;
+
+        running_len += record.encoded_len as u64;
 
         if let Some(progress) = on_progress {
-            progress((idx as u32) + 1, total_prepared.max(1));
+            progress((idx as u32) + 1, total.max(1));
         }
     }
-
-    out.extend_from_slice(&layer_defs_data);
-    out.extend_from_slice(&layer_payload_data);
-
-    Ok(out)
+    Ok(())
 }
 
 fn write_encrypted_settings(
@@ -884,7 +1006,7 @@ pub(super) fn build_ctb_encrypted_container_bytes_with_progress(
         layer_pointer_entries.push((layer_offset, layer_page));
 
         let is_bottom = (layer.index as u32) < timing.bottom_layer_count;
-        write_layer_def_ex(&mut out, layer, (layer.index as f32 + 1.0) * job.layer_height_mm, timing, layer_data_abs, LayerDefLayout::Encrypted, is_bottom);
+        write_layer_def_ex(&mut out, layer.index, layer.encoded.len() as u32, (layer.index as f32 + 1.0) * job.layer_height_mm, timing, layer_data_abs, LayerDefLayout::Encrypted, is_bottom);
         out.extend_from_slice(&layer.encoded);
 
         if let Some(progress) = on_progress {
