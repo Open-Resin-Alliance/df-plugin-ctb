@@ -322,6 +322,8 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
         timing.bottom_retract_speed_mm_min = 150.0;
         timing.lift_distance_mm = read_f32("layerHeightMm");
         timing.bottom_lift_distance_mm = read_f32("layerHeightMm");
+        timing.bottom_lift_distance2_mm = 0.0;
+        timing.lift_distance2_mm = 0.0;
     }
 
     timing
@@ -587,6 +589,7 @@ pub(super) fn parse_ctb_build_model_from_job(job: &SliceJobV3) -> CtbBuildModel 
         per_layer_settings = match settings_mode.as_deref() {
             Some("simple") => false,
             Some("twostage") => true,
+            Some("tilting") => true,
             _ => has_explicit_two_stage_motion || has_explicit_bottom_wait_time,
         };
 
