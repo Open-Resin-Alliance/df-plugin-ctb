@@ -372,7 +372,22 @@ fn parse_timestamp_meta(meta: &Value, path0: &str, path1: &str) -> Option<u32> {
     None
 }
 
+/// Wall-clock seconds for the archive's created/modified stamps, or the value of
+/// `SOURCE_DATE_EPOCH` when it is set.
+///
+/// Those stamps are the only non-deterministic bytes a `.ctb` carries, and they
+/// make two slices of the same model with the same settings differ — which is
+/// enough to defeat a whole-file comparison against a known-good reference.
+/// Honouring the reproducible-builds variable lets a caller pin them and get a
+/// byte-for-byte stable archive; nothing sets it in normal use, so a real slice
+/// still stamps the real time.
 fn unix_now_u32() -> u32 {
+    if let Some(pinned) = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+    {
+        return pinned.min(u32::MAX as u64) as u32;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
