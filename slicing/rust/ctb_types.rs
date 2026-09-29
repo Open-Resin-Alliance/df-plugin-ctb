@@ -40,6 +40,16 @@ pub(super) struct CtbPreparedLayer {
     pub encoded: Vec<u8>,
 }
 
+/// Lightweight per-layer bookkeeping used by the streaming encoder: everything
+/// `write_layer_def_ex` needs to build the layer descriptor table, without
+/// retaining the (potentially huge) encoded payload bytes in memory.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CtbLayerRecord {
+    pub index: usize,
+    pub source_len: usize,
+    pub encoded_len: u32,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CtbTimingModel {
     pub normal_exposure_sec: f32,
