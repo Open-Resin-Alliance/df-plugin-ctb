@@ -4,28 +4,17 @@
     { "id": "twostage", "title": "Two-Stage", "order": 20 }
   ],
   "sections": [
-    { "id": "twostage-burn-in-motion", "title": "Burn-In Two-Stage Motion", "tabId": "twostage", "order": 10 },
+    { "id": "twostage-burn-in-motion", "title": "Bottom Two-Stage Motion", "tabId": "twostage", "order": 10 },
     { "id": "twostage-motion", "title": "Two-Stage Motion", "tabId": "twostage", "order": 20 }
   ],
   "cards": [
-    { "id": "twostage-burn-in-settings", "title": "Burn-In Two-Stage Motion", "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "order": 10 },
+    { "id": "twostage-burn-in-settings", "title": "Bottom Two-Stage Motion", "tabId": "twostage", "sectionId": "twostage-burn-in-motion", "order": 10 },
     { "id": "twostage-settings", "title": "Two-Stage Motion", "tabId": "twostage", "sectionId": "twostage-motion", "order": 20 }
   ],
   "fields": [
     {
       "key": "transitionLayerCount",
       "defaultValue": 0
-    },
-    {
-      "key": "bottomProjectorPwmPercent",
-      "label": "Burn-in Projector PWM (%)",
-      "kind": "number",
-      "defaultValue": 100,
-      "min": 1,
-      "max": 100,
-      "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "light", "cardId": "light-settings", "order": 75 },
-      "metadataPath": "ctb.bottomLayerProjectorPwmPercent"
     },
     {
       "key": "bottomLiftDistanceMm",
@@ -38,7 +27,7 @@
     },
     {
       "key": "bottomLiftDistance2Mm",
-      "label": "Burn-In Lift Distance 2 (mm)",
+      "label": "Bottom Lift Distance 2 (mm)",
       "kind": "number",
       "defaultValue": 4,
       "tag": "Fast",
@@ -60,7 +49,7 @@
     },
     {
       "key": "bottomLiftSpeed2MmMin",
-      "label": "Burn-In Lift Speed 2 (mm/min)",
+      "label": "Bottom Lift Speed 2 (mm/min)",
       "kind": "number",
       "defaultValue": 180,
       "tag": "Fast",
@@ -82,7 +71,7 @@
     },
     {
       "key": "bottomRetractSpeed2MmMin",
-      "label": "Burn-In Retract Speed 2 (mm/min)",
+      "label": "Bottom Retract Speed 2 (mm/min)",
       "kind": "number",
       "defaultValue": 60,
       "tag": "Slow",
