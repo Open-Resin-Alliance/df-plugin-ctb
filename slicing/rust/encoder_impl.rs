@@ -3,6 +3,9 @@ mod ctb_layout;
 mod ctb_metadata;
 mod ctb_preview;
 mod ctb_types;
+mod ctb_wait_profile;
+mod ctb_first_layer;
+mod ctb_empty_layer;
 //mod ctb_v5;
 //mod ctb_v5enc;
 mod ctb_encoder;
@@ -1523,5 +1526,686 @@ mod tests {
             .expect("invalid legacy aes fields are ignored");
         let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(magic, 0x12FD_0107);
+    }
+
+    // ---- Wait-before-cure profile -------------------------------------------------
+
+    /// Reads per-layer "wait before cure" values back out of an encoded CTB v4/v5 file,
+    /// the same way UVTools / the Whale3 CTB Wait Editor locate them.
+    fn read_wait_before_cure_per_layer(bytes: &[u8]) -> Vec<f32> {
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let layer_defs = u32_at(0x40) as usize;
+        let layer_count = u32_at(0x44) as usize;
+        (0..layer_count)
+            .map(|i| {
+                let o = layer_defs + 36 * i;
+                let data_addr = u32_at(o + 12) as u64;
+                let page = u32_at(o + 20) as u64;
+                let ex = (page * 4_294_967_296 + data_addr - 84) as usize;
+                // Extended block starts with a copy of the 36-byte table entry.
+                assert_eq!(&bytes[o..o + 36], &bytes[ex..ex + 36], "layer {i} extended block mismatch");
+                f32_at(ex + 76)
+            })
+            .collect()
+    }
+
+    fn wait_profile_job(version: u32, layers: usize, extra: &str) -> (SliceJobV3, Vec<CtbPreparedLayer>) {
+        let mut job = make_test_job();
+        job.total_layers = layers as u32;
+        job.metadata_json = format!(
+            r#"{{
+                "printer": {{ "settingsMode": "simple" }},
+                "material": {{ "bottomLayerCount": 3, "bottomExposureSec": 30, "normalExposureSec": 2 }},
+                "ctb": {{
+                    "version": {version},
+                    "waitTimeBeforeCureSec": 2,
+                    "bottomWaitTimeBeforeCureSec": 20,
+                    "waitProfileEnabled": true,
+                    "waitProfileLayer1Sec": 600,
+                    "waitProfileLayer2Sec": 300,
+                    "waitProfileHoldHeightMm": 0.25,
+                    "waitProfileTransitionMethod": "time",
+                    "waitProfileDecreasePerLayerSec": 5
+                    {extra}
+                }}
+            }}"#
+        );
+        let prepared = (0..layers)
+            .map(|index| CtbPreparedLayer { index, source_len: 16, encoded: vec![2, 0, 255] })
+            .collect();
+        (job, prepared)
+    }
+
+    #[test]
+    fn wait_profile_is_written_per_layer_in_ctb_v4_and_v5() {
+        for version in [4_u32, 5] {
+            let (job, prepared) = wait_profile_job(version, 12, "");
+            let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+            let waits = read_wait_before_cure_per_layer(&bytes);
+            // L1, L2, bottom (layer 3), held to 0.25 mm (layers 4-5), then -5 s/layer to 2 s.
+            assert_eq!(
+                waits,
+                vec![600.0, 300.0, 20.0, 20.0, 20.0, 15.0, 10.0, 5.0, 2.0, 2.0, 2.0, 2.0],
+                "CTB v{version}"
+            );
+
+            // Per-layer settings flag must be on, even in simple mode.
+            let slicer_offset = u32::from_le_bytes(bytes[104..108].try_into().unwrap()) as usize;
+            assert_ne!(bytes[slicer_offset + 39], 0, "CTB v{version} per-layer flag");
+        }
+    }
+
+    #[test]
+    fn wait_profile_distance_transition_is_written() {
+        let (job, prepared) = wait_profile_job(
+            4,
+            10,
+            r#", "waitProfileTransitionMethod": "distance", "waitProfileTransitionDistanceMm": 0.1"#,
+        );
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+        // 20 -> 2 over 0.1 mm = 2 layers of 9 s.
+        assert_eq!(
+            read_wait_before_cure_per_layer(&bytes),
+            vec![600.0, 300.0, 20.0, 20.0, 20.0, 11.0, 2.0, 2.0, 2.0, 2.0]
+        );
+    }
+
+    #[test]
+    fn wait_profile_disabled_keeps_original_output() {
+        let (job, prepared) = wait_profile_job(6, 6, r#", "waitProfileEnabled": false"#);
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+        // Schedule off: the plain two-tier rule, using the same bottom and normal waits.
+        // No waitTimeBottomLayerCount in the metadata, so it falls back to the 3 bottom layers.
+        assert_eq!(read_wait_before_cure_per_layer(&bytes), vec![20.0, 20.0, 20.0, 2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn wait_profile_overrides_explicit_per_layer_settings_false() {
+        let (mut job, _) = wait_profile_job(4, 4, r#", "perLayerSettings": false"#);
+        assert!(parse_ctb_build_model_from_job(&job).per_layer_settings);
+        job.metadata_json = job.metadata_json.replace(r#""waitProfileEnabled": true"#, r#""waitProfileEnabled": false"#);
+        assert!(!parse_ctb_build_model_from_job(&job).per_layer_settings);
+    }
+
+    #[test]
+    fn print_time_estimate_includes_profile_waits() {
+        let (job, prepared) = wait_profile_job(4, 12, "");
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+        let print_time = u32::from_le_bytes(bytes[0x4c..0x50].try_into().unwrap());
+        let waits: f32 = read_wait_before_cure_per_layer(&bytes).iter().sum();
+        // 3 bottom layers x 30 s + 9 normal layers x 2 s of exposure, plus every wait,
+        // plus the fixed per-layer firmware overhead.
+        let overhead = 12.0 * super::ctb_types::CTB_PER_LAYER_OVERHEAD_SEC;
+        let expected = (3.0 * 30.0 + 9.0 * 2.0 + waits + overhead).round() as u32;
+        assert_eq!(print_time, expected);
+    }
+
+    #[test]
+    fn wait_profile_metadata_parsing() {
+        let meta = r#"{
+            "printer": { "settingsMode": "simple" },
+            "export": { "ctb": {
+                "waitProfileEnabled": true,
+                "waitProfileLayer1Sec": 0,
+                "waitProfileLayer2Sec": 45.5,
+                "bottomWaitTimeBeforeCureSec": 30,
+                "waitProfileHoldHeightMm": 2,
+                "waitProfileTransitionMethod": "Distance",
+                "waitProfileTransitionDistanceMm": 1.5
+            } }
+        }"#;
+        let timing = parse_timing_model_from_metadata(meta);
+        assert_eq!(timing.bottom_wait_time_before_cure_sec, 30.0);
+        let p = timing.wait_profile.expect("profile should parse");
+        assert_eq!(p.layer1_wait_sec, None); // 0 = same as bottom wait
+        assert_eq!(p.layer2_wait_sec, Some(45.5));
+        assert_eq!(p.hold_height_mm, 2.0);
+        assert_eq!(
+            p.transition,
+            super::ctb_types::CtbWaitTransition::Distance { distance_mm: 1.5 }
+        );
+        assert!(parse_timing_model_from_metadata("{}").wait_profile.is_none());
+    }
+
+    // ---- Bottom wait times in simple mode -----------------------------------------
+
+    /// Reads per-layer wait before cure / after cure / after lift out of an encoded file.
+    fn read_all_waits_per_layer(bytes: &[u8]) -> Vec<(f32, f32, f32)> {
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let layer_defs = u32_at(0x40) as usize;
+        (0..u32_at(0x44) as usize)
+            .map(|i| {
+                let o = layer_defs + 36 * i;
+                let ex = ((u32_at(o + 20) as u64) * 4_294_967_296 + u32_at(o + 12) as u64 - 84) as usize;
+                // Extended block order: wait after cure, after lift, then before cure.
+                (f32_at(ex + 76), f32_at(ex + 68), f32_at(ex + 72))
+            })
+            .collect()
+    }
+
+    fn bottom_wait_job(layers: usize) -> (SliceJobV3, Vec<CtbPreparedLayer>) {
+        let mut job = make_test_job();
+        job.total_layers = layers as u32;
+        job.metadata_json = r#"{
+            "printer": { "settingsMode": "simple" },
+            "material": { "bottomLayerCount": 2, "waitTimeBottomLayerCount": 4 },
+            "ctb": {
+                "version": 4,
+                "waitTimeBeforeCureSec": 1,
+                "waitTimeAfterCureSec": 0.5,
+                "waitTimeAfterLiftSec": 0.25,
+                "bottomWaitTimeBeforeCureSec": 20,
+                "bottomWaitTimeAfterCureSec": 8,
+                "bottomWaitTimeAfterLiftSec": 4
+            }
+        }"#
+        .to_string();
+        let prepared = (0..layers)
+            .map(|index| CtbPreparedLayer { index, source_len: 16, encoded: vec![2, 0, 255] })
+            .collect();
+        (job, prepared)
+    }
+
+    #[test]
+    fn simple_mode_keeps_separate_bottom_wait_times() {
+        let (job, prepared) = bottom_wait_job(6);
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+        let bottom = (20.0, 8.0, 4.0);
+        let normal = (1.0, 0.5, 0.25);
+        // waitTimeBottomLayerCount = 4, so layers 0-3 are bottom waits.
+        assert_eq!(
+            read_all_waits_per_layer(&bytes),
+            vec![bottom, bottom, bottom, bottom, normal, normal]
+        );
+    }
+
+    #[test]
+    fn simple_mode_enables_per_layer_settings_for_bottom_waits() {
+        let (job, _) = bottom_wait_job(4);
+        assert!(parse_ctb_build_model_from_job(&job).per_layer_settings);
+
+        // Without bottom waits, simple mode stays as it was.
+        let mut plain = job.clone();
+        plain.metadata_json = r#"{"printer":{"settingsMode":"simple"},"ctb":{"version":4}}"#.to_string();
+        assert!(!parse_ctb_build_model_from_job(&plain).per_layer_settings);
+    }
+
+    #[test]
+    fn simple_mode_still_simplifies_two_stage_motion() {
+        let job = SliceJobV3 {
+            metadata_json: r#"{"printer":{"settingsMode":"simple"},
+                "ctb":{"liftDistance2Mm":3,"liftSpeed2MmMin":90,"bottomWaitTimeAfterCureSec":8}}"#
+                .to_string(),
+            ..make_test_job()
+        };
+        let timing = parse_timing_model_from_metadata(&job.metadata_json);
+        assert_eq!(timing.lift_distance2_mm, 0.0);
+        assert_eq!(timing.lift_speed2_mm_min, 0.0);
+        assert_eq!(timing.bottom_wait_time_after_cure_sec, 8.0);
+    }
+
+    #[test]
+    fn bottom_layers_get_their_own_projector_pwm() {
+        let mut job = make_test_job();
+        job.total_layers = 5;
+        job.metadata_json = r#"{
+            "printer": { "settingsMode": "simple" },
+            "material": { "bottomLayerCount": 2 },
+            "ctb": { "version": 4, "projectorPwmPercent": 100, "bottomProjectorPwmPercent": 60 }
+        }"#
+        .to_string();
+        let prepared: Vec<CtbPreparedLayer> = (0..5)
+            .map(|index| CtbPreparedLayer { index, source_len: 16, encoded: vec![2, 0, 255] })
+            .collect();
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let layer_defs = u32_at(0x40) as usize;
+        let per_layer_pwm: Vec<f32> = (0..5)
+            .map(|i| {
+                let o = layer_defs + 36 * i;
+                let ex = ((u32_at(o + 20) as u64) * 4_294_967_296 + u32_at(o + 12) as u64 - 84) as usize;
+                f32::from_le_bytes(bytes[ex + 80..ex + 84].try_into().unwrap())
+            })
+            .collect();
+        // 60% -> 153, 100% -> 255.
+        assert_eq!(per_layer_pwm, vec![153.0, 153.0, 255.0, 255.0, 255.0]);
+
+        // Header carries both values too (normal first, then bottom).
+        assert_eq!(u16::from_le_bytes(bytes[96..98].try_into().unwrap()), 255);
+        assert_eq!(u16::from_le_bytes(bytes[98..100].try_into().unwrap()), 153);
+    }
+
+    #[test]
+    fn all_three_waits_switch_over_at_the_same_layer_with_the_schedule_on() {
+        let mut job = make_test_job();
+        job.total_layers = 8;
+        job.metadata_json = r#"{
+            "printer": { "settingsMode": "simple" },
+            "material": { "bottomLayerCount": 2, "waitTimeBottomLayerCount": 4 },
+            "ctb": {
+                "version": 4,
+                "bottomWaitTimeBeforeCureSec": 30, "waitTimeBeforeCureSec": 3,
+                "bottomWaitTimeAfterCureSec": 8, "waitTimeAfterCureSec": 1,
+                "bottomWaitTimeAfterLiftSec": 4, "waitTimeAfterLiftSec": 0.5,
+                "waitProfileEnabled": true,
+                "waitProfileLayer1Sec": 600,
+                "waitProfileLayer2Sec": 300,
+                "waitProfileHoldHeightMm": 0,
+                "waitProfileDecreasePerLayerSec": 9
+            }
+        }"#
+        .to_string();
+        let prepared: Vec<CtbPreparedLayer> = (0..8)
+            .map(|index| CtbPreparedLayer { index, source_len: 16, encoded: vec![2, 0, 255] })
+            .collect();
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+
+        let waits = read_all_waits_per_layer(&bytes);
+        // Before cure: layer 1 and 2 overrides, then bottom up to Bottom Wait Layers (4), then normal.
+        assert_eq!(
+            waits.iter().map(|w| w.0).collect::<Vec<_>>(),
+            vec![600.0, 300.0, 30.0, 30.0, 3.0, 3.0, 3.0, 3.0]
+        );
+        // After cure / after lift: plain bottom vs normal at the same layer.
+        assert_eq!(
+            waits.iter().map(|w| w.1).collect::<Vec<_>>(),
+            vec![8.0, 8.0, 8.0, 8.0, 1.0, 1.0, 1.0, 1.0]
+        );
+        assert_eq!(
+            waits.iter().map(|w| w.2).collect::<Vec<_>>(),
+            vec![4.0, 4.0, 4.0, 4.0, 0.5, 0.5, 0.5, 0.5]
+        );
+    }
+
+    // ---- Whale3 first-layer movement ------------------------------------------
+
+    /// (position z, lift total, lift speed, lift2, retract speed, retract2, retract speed2) per layer.
+    fn read_motion_per_layer(bytes: &[u8]) -> Vec<(f32, f32, f32, f32, f32, f32, f32)> {
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let layer_defs = u32_at(0x40) as usize;
+        (0..u32_at(0x44) as usize)
+            .map(|i| {
+                let o = layer_defs + 36 * i;
+                let ex = ((u32_at(o + 20) as u64) * 4_294_967_296 + u32_at(o + 12) as u64 - 84) as usize;
+                assert_eq!(&bytes[o..o + 36], &bytes[ex..ex + 36], "layer {i} extended block mismatch");
+                (
+                    f32_at(o),
+                    f32_at(ex + 40),
+                    f32_at(ex + 44),
+                    f32_at(ex + 48),
+                    f32_at(ex + 56),
+                    f32_at(ex + 60),
+                    f32_at(ex + 64),
+                )
+            })
+            .collect()
+    }
+
+    fn first_layer_job(version: u32, mode: &str, extra: &str) -> (SliceJobV3, Vec<CtbPreparedLayer>) {
+        let mut job = make_test_job();
+        job.total_layers = 4;
+        job.metadata_json = format!(
+            r#"{{
+                "printer": {{ "settingsMode": "simple" }},
+                "material": {{
+                    "bottomLayerCount": 2, "bottomExposureSec": 30, "normalExposureSec": 2,
+                    "bottomLiftDistanceMm": 6, "bottomLiftSpeedMmMin": 60, "bottomRetractSpeedMmMin": 90,
+                    "liftDistanceMm": 5, "liftSpeedMmMin": 120, "retractSpeedMmMin": 150
+                }},
+                "ctb": {{ "version": {version}, "firstLayerMoveMode": "{mode}" {extra} }}
+            }}"#
+        );
+        let prepared = (0..4)
+            .map(|index| CtbPreparedLayer { index, source_len: 16, encoded: vec![2, 0, 255] })
+            .collect();
+        (job, prepared)
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-5
+    }
+
+    #[test]
+    fn first_layer_default_mode_is_unchanged() {
+        let (job, prepared) = first_layer_job(4, "default", "");
+        let m = read_motion_per_layer(&build_ctb_container_bytes(&job, &prepared).unwrap());
+        let z: Vec<f32> = m.iter().map(|l| l.0).collect();
+        assert!(z.iter().zip([0.05, 0.1, 0.15, 0.2]).all(|(a, b)| close(*a, b)), "{z:?}");
+        assert!(close(m[0].1, 6.0) && close(m[0].2, 60.0) && close(m[0].4, 90.0));
+        assert!(!parse_ctb_build_model_from_job(&job).per_layer_settings);
+    }
+
+    #[test]
+    fn first_layer_home_mode_lifts_2_5_mm_and_cures_at_home() {
+        for version in [4_u32, 5] {
+            let (job, prepared) = first_layer_job(version, "home", "");
+            let bytes = build_ctb_container_bytes(&job, &prepared).unwrap();
+            let m = read_motion_per_layer(&bytes);
+            let z: Vec<f32> = m.iter().map(|l| l.0).collect();
+            assert!(z.iter().zip([0.0, 0.05, 0.1, 0.15]).all(|(a, b)| close(*a, b)), "v{version} {z:?}");
+            // Layer 1: one 2.5 mm stage at 20 mm/min each way.
+            let l1 = m[0];
+            assert!(close(l1.1, 2.5) && close(l1.2, 20.0) && close(l1.3, 0.0), "v{version} {l1:?}");
+            assert!(close(l1.4, 20.0) && close(l1.5, 0.0) && close(l1.6, 20.0), "v{version} {l1:?}");
+            // Layer 2 back on the bottom values, layer 3 on the normal ones.
+            assert!(close(m[1].1, 6.0) && close(m[1].2, 60.0) && close(m[1].4, 90.0));
+            assert!(close(m[2].1, 5.0) && close(m[2].2, 120.0) && close(m[2].4, 150.0));
+            // Per-layer settings switched on so the printer reads layer 1's values.
+            let slicer_offset = u32::from_le_bytes(bytes[104..108].try_into().unwrap()) as usize;
+            assert_ne!(bytes[slicer_offset + 39], 0, "v{version} per-layer flag");
+        }
+    }
+
+    #[test]
+    fn first_layer_below_home_mode_cures_one_layer_below_home() {
+        let (job, prepared) = first_layer_job(5, "below-home", "");
+        let m = read_motion_per_layer(&build_ctb_container_bytes(&job, &prepared).unwrap());
+        let z: Vec<f32> = m.iter().map(|l| l.0).collect();
+        assert!(z.iter().zip([-0.05, 0.0, 0.05, 0.1]).all(|(a, b)| close(*a, b)), "{z:?}");
+        assert!(close(m[0].1, 2.5) && close(m[0].2, 20.0) && close(m[0].4, 20.0));
+    }
+
+    #[test]
+    fn first_layer_mode_overrides_explicit_per_layer_settings_false() {
+        let (job, _) = first_layer_job(4, "home", r#", "perLayerSettings": false"#);
+        assert!(parse_ctb_build_model_from_job(&job).per_layer_settings);
+    }
+
+    #[test]
+    fn first_layer_print_time_uses_the_slow_move() {
+        let time = |mode: &str| {
+            let (job, prepared) = first_layer_job(4, mode, "");
+            let bytes = build_ctb_container_bytes(&job, &prepared).unwrap();
+            u32::from_le_bytes(bytes[0x4c..0x50].try_into().unwrap()) as i64
+        };
+        // Default layer 1: 6 mm up at 60 mm/min + 6 mm down at 90 mm/min = 10 s.
+        // Home: 2.5 mm up and 2.5 mm down at 20 mm/min = 15 s. Below home: 2.5 + 2.55 mm = 15.15 s.
+        assert_eq!(time("home") - time("default"), 5);
+        assert_eq!(time("below-home") - time("default"), 5);
+    }
+
+    #[test]
+    fn first_layer_mode_is_written_in_encrypted_v5() {
+        let (mut job, prepared) = first_layer_job(5, "below-home", "");
+        job.format_version = Some("v5enc".to_string());
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("v5enc should build");
+        // Encrypted layer definitions start with their size (88) followed by the Z position.
+        let mut zs = Vec::new();
+        for o in 0..bytes.len().saturating_sub(48) {
+            if u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap()) == 88
+                && u32::from_le_bytes(bytes[o + 24..o + 28].try_into().unwrap()) == 3
+            {
+                zs.push((
+                    f32::from_le_bytes(bytes[o + 4..o + 8].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[o + 40..o + 44].try_into().unwrap()),
+                ));
+            }
+        }
+        assert_eq!(zs.len(), 4, "{zs:?}");
+        assert!(close(zs[0].0, -0.05) && close(zs[0].1, 2.5), "{zs:?}");
+        assert!(close(zs[1].0, 0.0) && close(zs[1].1, 6.0), "{zs:?}");
+    }
+
+    // ---- UVTools-style empty first layer --------------------------------------
+
+    /// Per-layer view used by the empty-first-layer tests:
+    /// (z, exposure, light off, lift total, lift speed, retract speed, pwm, data len).
+    fn read_layers_for_empty_tests(bytes: &[u8]) -> Vec<(f32, f32, f32, f32, f32, f32, f32, u32)> {
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let layer_defs = u32_at(0x40) as usize;
+        (0..u32_at(0x44) as usize)
+            .map(|i| {
+                let o = layer_defs + 36 * i;
+                let ex = ((u32_at(o + 20) as u64) * 4_294_967_296 + u32_at(o + 12) as u64 - 84) as usize;
+                assert_eq!(&bytes[o..o + 36], &bytes[ex..ex + 36], "layer {i} extended block mismatch");
+                (
+                    f32_at(o),
+                    f32_at(o + 4),
+                    f32_at(o + 8),
+                    f32_at(ex + 40),
+                    f32_at(ex + 44),
+                    f32_at(ex + 56),
+                    f32_at(ex + 80),
+                    u32_at(o + 16),
+                )
+            })
+            .collect()
+    }
+
+    fn empty_first_layer_job(version: u32, layers: usize, extra: &str) -> (SliceJobV3, Vec<CtbPreparedLayer>) {
+        let mut job = make_test_job();
+        job.total_layers = layers as u32;
+        job.metadata_json = format!(
+            r#"{{
+                "printer": {{ "settingsMode": "simple" }},
+                "material": {{
+                    "bottomLayerCount": 2, "bottomExposureSec": 30, "normalExposureSec": 2,
+                    "bottomLiftDistanceMm": 6, "bottomLiftSpeedMmMin": 60, "bottomRetractSpeedMmMin": 90,
+                    "liftDistanceMm": 5, "liftSpeedMmMin": 120, "retractSpeedMmMin": 150
+                }},
+                "ctb": {{
+                    "version": {version},
+                    "emptyFirstLayer": true,
+                    "bottomWaitTimeBeforeCureSec": 120, "waitTimeBeforeCureSec": 3,
+                    "bottomWaitTimeAfterCureSec": 4, "waitTimeAfterCureSec": 1,
+                    "bottomWaitTimeAfterLiftSec": 3, "waitTimeAfterLiftSec": 0.5
+                    {extra}
+                }}
+            }}"#
+        );
+        let prepared = (0..layers)
+            .map(|index| CtbPreparedLayer { index, source_len: 16, encoded: vec![2, 0, 255] })
+            .collect();
+        (job, prepared)
+    }
+
+    #[test]
+    fn empty_first_layer_matches_the_uvtools_shape() {
+        let (job, prepared) = empty_first_layer_job(4, 4, "");
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("container should build");
+        let layers = read_layers_for_empty_tests(&bytes);
+
+        // One layer more than the model, and the blank one shares layer 1's Z.
+        assert_eq!(layers.len(), 5);
+        assert!(close(layers[0].0, 0.05) && close(layers[1].0, 0.05), "{:?}", (layers[0].0, layers[1].0));
+        let z: Vec<f32> = layers.iter().map(|l| l.0).collect();
+        assert!(z.iter().zip([0.05, 0.05, 0.1, 0.15, 0.2]).all(|(a, b)| close(*a, b)), "{z:?}");
+
+        // The blank layer: a flash of exposure at the lowest PWM, no light-off, 0.1 mm hop
+        // at the bottom speeds.
+        let e = layers[0];
+        assert!(close(e.1, 0.01), "exposure {:?}", e.1);
+        assert!(close(e.2, 0.0), "light off {:?}", e.2);
+        assert!(close(e.3, 0.1) && close(e.4, 60.0) && close(e.5, 90.0), "motion {e:?}");
+        assert!(close(e.6, 1.0), "pwm {:?}", e.6);
+        // ... and no waits of any kind.
+        let waits = read_all_waits_per_layer(&bytes);
+        assert_eq!(waits[0], (0.0, 0.0, 0.0));
+
+        // The real layers keep their own values, starting with the real first layer.
+        assert!(close(layers[1].1, 30.0) && close(layers[1].3, 6.0), "{:?}", layers[1]);
+        assert_eq!(waits[1], (120.0, 4.0, 3.0));
+        assert!(close(layers[3].1, 2.0) && close(layers[3].3, 5.0), "{:?}", layers[3]);
+
+        // Header: total height unchanged, bottom layer count raised by one, per-layer on.
+        let total_height = f32::from_le_bytes(bytes[28..32].try_into().unwrap());
+        assert!(close(total_height, 0.2), "total height {total_height}");
+        assert_eq!(u32::from_le_bytes(bytes[48..52].try_into().unwrap()), 3);
+        let slicer_offset = u32::from_le_bytes(bytes[104..108].try_into().unwrap()) as usize;
+        assert_ne!(bytes[slicer_offset + 39], 0, "per-layer flag");
+    }
+
+    #[test]
+    fn empty_first_layer_off_changes_nothing() {
+        let (on_job, prepared) = empty_first_layer_job(4, 4, "");
+        let (mut off_job, _) = empty_first_layer_job(4, 4, "");
+        off_job.metadata_json = off_job
+            .metadata_json
+            .replace(r#""emptyFirstLayer": true"#, r#""emptyFirstLayer": false"#);
+
+        let on = build_ctb_container_bytes(&on_job, &prepared).unwrap();
+        let off = build_ctb_container_bytes(&off_job, &prepared).unwrap();
+        let on_layers = read_layers_for_empty_tests(&on);
+        let off_layers = read_layers_for_empty_tests(&off);
+
+        assert_eq!(off_layers.len(), 4);
+        assert_eq!(u32::from_le_bytes(off[48..52].try_into().unwrap()), 2);
+        // Every real layer is written exactly the same way, just one slot later.
+        assert_eq!(&on_layers[1..].iter().map(|l| (l.0, l.1, l.3, l.6)).collect::<Vec<_>>(),
+                   &off_layers.iter().map(|l| (l.0, l.1, l.3, l.6)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn empty_first_layer_covers_the_whole_screen_and_lights_one_pixel() {
+        let (mut job, prepared) = empty_first_layer_job(4, 2, "");
+        job.source_width_px = 64;
+        job.source_height_px = 32;
+        let bytes = build_ctb_container_bytes(&job, &prepared).unwrap();
+        let layers = read_layers_for_empty_tests(&bytes);
+
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        let layer_defs = u32_at(0x40) as usize;
+        let addr = (u32_at(layer_defs + 20) as u64) * 4_294_967_296 + u32_at(layer_defs + 12) as u64;
+        let data = &bytes[addr as usize..addr as usize + layers[0].7 as usize];
+
+        // CTB v4 is not obfuscated, so the packets can be read straight out of the file.
+        assert_eq!(u32::from_le_bytes(bytes[100..104].try_into().unwrap()), 0, "v4 xor key");
+        let mut pixels = 0usize;
+        let mut lit = 0usize;
+        let mut i = 0usize;
+        while i < data.len() {
+            let code = data[i];
+            i += 1;
+            let value = (code & 0x7f) << 1;
+            let len = if code & 0x80 == 0 {
+                1
+            } else {
+                let n = data[i];
+                i += 1;
+                if n & 0x80 == 0 {
+                    n as usize
+                } else {
+                    let v = (((n & 0x3f) as usize) << 8) | data[i] as usize;
+                    i += 1;
+                    v
+                }
+            };
+            pixels += len;
+            if value != 0 {
+                lit += len;
+            }
+        }
+        assert_eq!(pixels, 64 * 32, "must cover the screen exactly");
+        assert_eq!(lit, 1, "exactly one lit pixel");
+    }
+
+    #[test]
+    fn empty_first_layer_rekeys_obfuscated_layer_data() {
+        // CTB v5 obfuscates each layer's RLE with a key derived from its file position,
+        // so inserting a layer has to re-key everything behind it.
+        let (job, _) = empty_first_layer_job(5, 3, "");
+        let seed = parse_ctb_build_model_from_job(&job).layer_xor_key;
+        assert_ne!(seed, 0, "v5 should be obfuscated");
+
+        // Layers arrive already obfuscated for the position they were sliced at.
+        let prepared: Vec<CtbPreparedLayer> = (0..3)
+            .map(|index| {
+                let mut encoded = vec![2_u8, 0, 255];
+                ctb_layer_rle_xor(seed, index as u32, &mut encoded);
+                CtbPreparedLayer { index, source_len: 16, encoded }
+            })
+            .collect();
+
+        let bytes = build_ctb_container_bytes(&job, &prepared).unwrap();
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        assert_eq!(u32_at(100), seed, "header should advertise the same key");
+
+        let layer_defs = u32_at(0x40) as usize;
+        for file_index in 1..4u32 {
+            let o = layer_defs + 36 * file_index as usize;
+            let addr = ((u32_at(o + 20) as u64) * 4_294_967_296 + u32_at(o + 12) as u64) as usize;
+            let len = u32_at(o + 16) as usize;
+            let mut data = bytes[addr..addr + len].to_vec();
+            ctb_layer_rle_xor(seed, file_index, &mut data);
+            assert_eq!(data, vec![2, 0, 255], "layer at file position {file_index}");
+        }
+    }
+
+    #[test]
+    fn empty_first_layer_works_with_the_wait_profile_and_first_layer_movement() {
+        let (job, prepared) = empty_first_layer_job(
+            4,
+            5,
+            r#", "firstLayerMoveMode": "home",
+                 "waitProfileEnabled": true,
+                 "waitProfileLayer1Sec": 600, "waitProfileLayer2Sec": 300,
+                 "waitProfileHoldHeightMm": 0"#,
+        );
+        let bytes = build_ctb_container_bytes(&job, &prepared).unwrap();
+        let layers = read_layers_for_empty_tests(&bytes);
+        let waits = read_all_waits_per_layer(&bytes);
+
+        // Home mode moves the stack down one layer; the blank layer follows layer 1 there.
+        let z: Vec<f32> = layers.iter().map(|l| l.0).collect();
+        assert!(z.iter().zip([0.0, 0.0, 0.05, 0.1, 0.15, 0.2]).all(|(a, b)| close(*a, b)), "{z:?}");
+        // It borrows that mode's slow speeds for its own hop, and still waits for nothing.
+        assert!(close(layers[0].3, 0.1) && close(layers[0].4, 20.0) && close(layers[0].5, 20.0), "{:?}", layers[0]);
+        assert_eq!(waits[0], (0.0, 0.0, 0.0));
+        // The 600 s / 300 s layer-1 and layer-2 waits land on the real layers.
+        assert_eq!(waits[1].0, 600.0);
+        assert_eq!(waits[2].0, 300.0);
+        // Layer 1 keeps the first-layer movement's 2.5 mm move.
+        assert!(close(layers[1].3, 2.5) && close(layers[1].4, 20.0), "{:?}", layers[1]);
+    }
+
+    #[test]
+    fn empty_first_layer_print_time_adds_one_layer_of_overhead() {
+        let time = |on: bool| {
+            let (mut job, prepared) = empty_first_layer_job(4, 4, "");
+            if !on {
+                job.metadata_json = job
+                    .metadata_json
+                    .replace(r#""emptyFirstLayer": true"#, r#""emptyFirstLayer": false"#);
+            }
+            let bytes = build_ctb_container_bytes(&job, &prepared).unwrap();
+            f64::from(u32::from_le_bytes(bytes[0x4c..0x50].try_into().unwrap()))
+        };
+        // 0.01 s of exposure, 0.1 mm up at 60 mm/min and down at 90 mm/min, plus the
+        // fixed per-layer overhead.
+        let expected = 0.01 + 0.1 / 60.0 * 60.0 + 0.1 / 90.0 * 60.0
+            + f64::from(super::ctb_types::CTB_PER_LAYER_OVERHEAD_SEC);
+        assert!((time(true) - time(false) - expected).abs() <= 1.0, "{} vs {}", time(true), time(false));
+    }
+
+    #[test]
+    fn empty_first_layer_is_written_in_encrypted_v5() {
+        let (mut job, prepared) = empty_first_layer_job(5, 3, "");
+        job.format_version = Some("v5enc".to_string());
+        let bytes = build_ctb_container_bytes(&job, &prepared).expect("v5enc should build");
+        // Encrypted layer definitions start with their size (88) then the Z position;
+        // the exposure follows, so the blank layer is the one at 0.01 s.
+        let mut found = Vec::new();
+        for o in 0..bytes.len().saturating_sub(48) {
+            let data_len = u32::from_le_bytes(bytes[o + 24..o + 28].try_into().unwrap());
+            // 3 bytes for a test layer's RLE, 5 for the blank layer's.
+            if u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap()) == 88
+                && (data_len == 3 || data_len == 5)
+            {
+                found.push((
+                    f32::from_le_bytes(bytes[o + 4..o + 8].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[o + 8..o + 12].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[o + 40..o + 44].try_into().unwrap()),
+                ));
+            }
+        }
+        assert_eq!(found.len(), 4, "{found:?}");
+        // Blank layer first: same Z as the real first layer, 0.01 s, 0.1 mm hop.
+        assert!(close(found[0].0, 0.05) && close(found[0].1, 0.01) && close(found[0].2, 0.1), "{found:?}");
+        assert!(close(found[1].0, 0.05) && close(found[1].1, 30.0) && close(found[1].2, 6.0), "{found:?}");
     }
 }

@@ -5,6 +5,12 @@ pub(super) const DEFAULT_RESIN_NAME: &str = "DragonFruit Resin";
 pub(super) const DEFAULT_RESIN_TYPE: &str = "Standard";
 pub(super) const DEFAULT_RESIN_DENSITY: f32 = 1.1;
 
+/// Fixed per-layer firmware overhead (image load, acceleration, settling) added to the
+/// print-time estimate on top of the summed delays and travel. Calibrated on a Whale3 SE:
+/// 245 layers printed in 2:43:03 against 2:26:37 of summed delays = 4.0 s per layer.
+/// Keep equal to CTB_PER_LAYER_OVERHEAD_SEC in the app's printTimeEstimate.ts.
+pub(super) const CTB_PER_LAYER_OVERHEAD_SEC: f32 = 4.0;
+
 pub(super) const CTB_MAGIC_V2_V3: u32 = 0x12FD_0086;
 pub(super) const CTB_MAGIC_V4_V5: u32 = 0x12FD_0106;
 pub(super) const CTB_MAGIC_V5_ENCRYPTED: u32 = 0x12FD_0107;
@@ -72,6 +78,53 @@ pub(super) struct CtbTimingModel {
     pub bottom_wait_time_after_lift_sec: f32,
     pub projector_duty_cycle_pwm: u16,
     pub bottom_layer_projector_duty_cycle_pwm: u16,
+    /// Optional per-layer "wait before cure" schedule. When `Some`, it replaces the
+    /// two-tier bottom/normal wait-before-cure rule (see `ctb_wait_profile.rs`).
+    pub wait_profile: Option<CtbWaitProfile>,
+    /// How the plate moves before the first layer (see `ctb_first_layer.rs`).
+    pub first_layer_move: CtbFirstLayerMove,
+    /// Prepend a throwaway blank layer, UVTools style, so the printer's first-layer
+    /// quirks land on it instead of the real first layer (see `ctb_empty_layer.rs`).
+    pub empty_first_layer: bool,
+}
+
+/// First-layer movement, matching the Whale3 GCode Generator's CWS modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum CtbFirstLayerMove {
+    /// Normal behaviour: layer 1 cures one layer height above home, with the bottom lift values.
+    #[default]
+    Default,
+    /// Lift 2.5 mm, retract 2.5 mm plus one layer height: layer 1 cures one layer below home.
+    BelowHome,
+    /// Lift 2.5 mm, retract 2.5 mm: layer 1 cures exactly at home.
+    Home,
+}
+
+/// How the wait before cure steps down from the bottom value to the normal value
+/// once the print is above the hold height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum CtbWaitTransition {
+    /// Subtract this many seconds per layer.
+    TimePerLayer { decrease_sec: f32 },
+    /// Reach the normal wait over this many millimetres of height.
+    Distance { distance_mm: f32 },
+}
+
+/// Wait-before-cure schedule, modelled on UVTools / AutomaticLogic style
+/// "wait before cure" profiles:
+///   - layer 1 and layer 2 may have their own value,
+///   - bottom wait layers (and everything up to `hold_height_mm`) use the bottom wait,
+///   - above the hold height the wait steps down to the normal
+///     `wait_time_before_cure_sec` from the timing model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct CtbWaitProfile {
+    /// `None` = use the bottom wait before cure.
+    pub layer1_wait_sec: Option<f32>,
+    /// `None` = use the bottom wait before cure.
+    pub layer2_wait_sec: Option<f32>,
+    /// 0 = no hold: only the bottom layers get the bottom wait, then straight to normal.
+    pub hold_height_mm: f32,
+    pub transition: CtbWaitTransition,
 }
 
 #[derive(Debug, Clone)]

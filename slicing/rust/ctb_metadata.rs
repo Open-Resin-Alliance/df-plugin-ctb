@@ -5,7 +5,8 @@ use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::ctb_types::{
-    CtbBuildModel, CtbResinModel, CtbTimingModel, CTB_DISCLAIMER_B64, DEFAULT_BINARY_THRESHOLD,
+    CtbBuildModel, CtbFirstLayerMove, CtbResinModel, CtbTimingModel, CtbWaitProfile, CtbWaitTransition,
+    CTB_DISCLAIMER_B64, DEFAULT_BINARY_THRESHOLD,
     DEFAULT_CTB_VERSION, DEFAULT_MACHINE_NAME, DEFAULT_RESIN_DENSITY, DEFAULT_RESIN_NAME,
     DEFAULT_RESIN_TYPE,
 };
@@ -97,6 +98,9 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
             bottom_wait_time_after_lift_sec: 0.0,
             projector_duty_cycle_pwm: 0,
             bottom_layer_projector_duty_cycle_pwm: 0,
+            wait_profile: None,
+            first_layer_move: CtbFirstLayerMove::Default,
+            empty_first_layer: false,
         };
     };
 
@@ -173,6 +177,20 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
             .or_else(|| material.and_then(|m| m.get(key)).and_then(Value::as_u64))
             .unwrap_or(0) as u32
     };
+    let read_value = |key: &str| {
+        ctb.and_then(|m| m.get(key))
+            .or_else(|| ctb_timing.and_then(|m| m.get(key)))
+            .or_else(|| export_ctb.and_then(|m| m.get(key)))
+            .or_else(|| export_ctb_timing.and_then(|m| m.get(key)))
+            .or_else(|| material.and_then(|m| m.get(key)))
+    };
+    let read_bool = |key: &str| read_value(key).and_then(Value::as_bool).unwrap_or(false);
+    let read_str = |key: &str| {
+        read_value(key)
+            .and_then(Value::as_str)
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
 
     let mut timing = CtbTimingModel {
         normal_exposure_sec: read_f32("normalExposureSec"),
@@ -205,6 +223,9 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
         bottom_wait_time_after_lift_sec: read_f32("bottomWaitTimeAfterLiftSec"),
         projector_duty_cycle_pwm: ((read_u32("projectorPwmPercent") as f32) * 2.55) as u16,
         bottom_layer_projector_duty_cycle_pwm : ((read_u32("bottomProjectorPwmPercent") as f32) * 2.55) as u16,
+        wait_profile: None,
+        first_layer_move: CtbFirstLayerMove::Default,
+        empty_first_layer: false,
     };
 
     let sanitize_non_negative = |value: f32| {
@@ -241,6 +262,40 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
     timing.bottom_wait_time_before_cure_sec = sanitize_non_negative(timing.bottom_wait_time_before_cure_sec);
     timing.bottom_wait_time_after_cure_sec = sanitize_non_negative(timing.bottom_wait_time_after_cure_sec);
     timing.bottom_wait_time_after_lift_sec = sanitize_non_negative(timing.bottom_wait_time_after_lift_sec);
+
+    // Layer 1 / layer 2 and transition schedule on top of the bottom and normal
+    // wait before cure. Available in every settings mode.
+    if read_bool("waitProfileEnabled") {
+        // 0 (or empty) for layer 1 / layer 2 means "same as the bottom wait".
+        let optional_override = |key: &str| {
+            let v = sanitize_non_negative(read_f32(key));
+            if v > 0.0 { Some(v) } else { None }
+        };
+        let transition = match read_str("waitProfileTransitionMethod").as_str() {
+            "distance" => CtbWaitTransition::Distance {
+                distance_mm: sanitize_non_negative(read_f32("waitProfileTransitionDistanceMm")),
+            },
+            _ => CtbWaitTransition::TimePerLayer {
+                decrease_sec: sanitize_non_negative(read_f32("waitProfileDecreasePerLayerSec")),
+            },
+        };
+        timing.wait_profile = Some(CtbWaitProfile {
+            layer1_wait_sec: optional_override("waitProfileLayer1Sec"),
+            layer2_wait_sec: optional_override("waitProfileLayer2Sec"),
+            hold_height_mm: sanitize_non_negative(read_f32("waitProfileHoldHeightMm")),
+            transition,
+        });
+    }
+
+    // UVTools-style throwaway blank layer in front of the real first layer.
+    timing.empty_first_layer = read_bool("emptyFirstLayer");
+
+    // Whale3-style first-layer movement (lift/retract before layer 1 and where it cures).
+    timing.first_layer_move = match read_str("firstLayerMoveMode").as_str() {
+        "below-home" | "belowhome" | "below_home" | "special" => CtbFirstLayerMove::BelowHome,
+        "home" => CtbFirstLayerMove::Home,
+        _ => CtbFirstLayerMove::Default,
+    };
 
     if timing.projector_duty_cycle_pwm <= 0 {
         timing.projector_duty_cycle_pwm = 255;
@@ -298,10 +353,8 @@ pub(super) fn parse_timing_model_from_metadata(metadata_json: &str) -> CtbTiming
         timing.bottom_lift_speed2_mm_min = 0.0;
         timing.bottom_retract_speed2_mm_min = 0.0;
         timing.bottom_retract_height2_mm = 0.0;
-        
-        timing.bottom_wait_time_after_cure_sec = 0.0;
-        timing.bottom_wait_time_after_lift_sec = 0.0;
-        timing.bottom_wait_time_before_cure_sec = 0.0;
+        // Bottom wait times are kept in simple mode: wait before cure / after cure /
+        // after lift each have their own bottom value there.
     }
 
     if is_allfields_mode {
@@ -602,7 +655,8 @@ pub(super) fn parse_ctb_build_model_from_job(job: &SliceJobV3) -> CtbBuildModel 
         .any(|key| read_positive_f32(ctb_root, key) || read_positive_f32(export_ctb_root, key));
 
         per_layer_settings = match settings_mode.as_deref() {
-            Some("simple") => false,
+            // Bottom wait times need per-layer settings in simple mode too.
+            Some("simple") => has_explicit_bottom_wait_time,
             Some("twostage") => true,
             Some("tilting") => true,
             _ => has_explicit_two_stage_motion || has_explicit_bottom_wait_time,
@@ -621,6 +675,18 @@ pub(super) fn parse_ctb_build_model_from_job(job: &SliceJobV3) -> CtbBuildModel 
 
     if let Some((hint_version, _)) = format_hint {
         version = hint_version.clamp(2, 5);
+    }
+
+    // A wait profile only works if the printer reads the per-layer values, so it always
+    // turns per-layer settings on (even over an explicit perLayerSettings: false).
+    // The first-layer movement is written into layer 1's own lift values, so it needs them too,
+    // and so does the empty first layer, whose own values differ from every other layer's.
+    let parsed_timing = parse_timing_model_from_metadata(&job.metadata_json);
+    if parsed_timing.wait_profile.is_some()
+        || parsed_timing.first_layer_move != CtbFirstLayerMove::Default
+        || parsed_timing.empty_first_layer
+    {
+        per_layer_settings = true;
     }
 
     if version >= 5 && layer_xor_key == 0 {

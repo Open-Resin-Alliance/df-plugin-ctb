@@ -12,12 +12,18 @@ use super::ctb_metadata::{
 };
 use super::ctb_preview::build_previews;
 use super::ctb_preview::write_preview_record;
+use super::ctb_wait_profile::{is_extended_wait_layer, wait_before_cure_sec};
+use super::ctb_first_layer::{first_layer_motion, layer_position_z_mm};
+use super::ctb_empty_layer::{
+    build_empty_first_layer, empty_first_layer_motion, empty_layer_count, rekey_layer_rle,
+    EMPTY_FIRST_LAYER_EXPOSURE_SEC, EMPTY_FIRST_LAYER_PWM,
+};
 use super::ctb_types::{
     CtbBuildModel, CtbExtendedOffsets, CtbPreparedLayer, CtbPreviewOffsets, CtbResinModel,
     CtbResinPayload, CtbTimingModel, CTB_DISCLAIMER_SIZE, CTB_HEADER_SIZE, CTB_LAYER_DEF_EX_SIZE,
     CTB_LAYER_DEF_SIZE, CTB_MAGIC_V2_V3, CTB_MAGIC_V4_V5, CTB_PREVIEW_RECORD_SIZE,
     CTB_PRINT_PARAMETERS_SIZE, CTB_PRINT_PARAMETERS_V4_RESERVED_SIZE, CTB_PRINT_PARAMETERS_V4_SIZE,
-    CTB_SLICER_INFO_FIXED_SIZE,
+    CTB_SLICER_INFO_FIXED_SIZE, CTB_PER_LAYER_OVERHEAD_SEC,
     CTB_ENCRYPTED_LAYER_DEF_SIZE, CTB_ENCRYPTED_SETTINGS_OFFSET, CTB_ENCRYPTED_SETTINGS_SIZE, CTB_MAGIC_V5_ENCRYPTED, CTB_ENCRYPTED_HEADER_SIZE
 };
 use sha2::{Digest, Sha256};
@@ -87,12 +93,14 @@ fn write_ctb_header(
     push_f32(out, build.bed_size_z_mm.max(0.0));
     push_u32(out, build.created_date_unix);
     push_u32(out, build.modified_date_unix);
-    push_f32(out, job.layer_height_mm * layer_count as f32);
+    // The inserted blank layer shares the real first layer's Z, so it adds no height,
+    // but it does count as one more bottom layer so the real bottom layers keep theirs.
+    push_f32(out, job.layer_height_mm * layer_count.saturating_sub(empty_layer_count(&timing)) as f32);
     push_f32(out, job.layer_height_mm);
     push_f32(out, timing.normal_exposure_sec);
     push_f32(out, timing.bottom_exposure_sec);
     push_f32(out, timing.light_off_delay_sec);
-    push_u32(out, timing.bottom_layer_count);
+    push_u32(out, timing.bottom_layer_count + empty_layer_count(&timing));
     push_u32(out, job.source_width_px);
     push_u32(out, job.source_height_px);
     push_u32(out, preview_offsets.large_record_offset); //
@@ -127,7 +135,7 @@ fn write_ctb_print_parameters(out: &mut Vec<u8>, timing: CtbTimingModel) {
     push_f32(out, timing.retract_speed2_mm_min);
     push_f32(out, timing.bottom_light_off_delay_sec);
     push_f32(out, timing.light_off_delay_sec);
-    push_u32(out, timing.bottom_layer_count);
+    push_u32(out, timing.bottom_layer_count + empty_layer_count(&timing));
     push_u32(out, 0);
     push_u32(out, 0);
     push_u32(out, 0);
@@ -300,13 +308,24 @@ enum LayerDefLayout {
 
 //TODO generalize function
 fn interpolate_transition_layer_exposure(
-    layer: &CtbPreparedLayer,
+    layer_index: usize,
     timing: &CtbTimingModel
 ) -> f32 {
     return timing.bottom_exposure_sec 
         - (timing.bottom_exposure_sec - timing.normal_exposure_sec) 
             / (timing.transition_layer_count as f32) 
-            * (layer.index as u32 - timing.bottom_layer_count + 1) as f32;
+            * (layer_index as u32 - timing.bottom_layer_count + 1) as f32;
+}
+
+/// Exposure time for a layer, including the bottom -> normal transition layers.
+fn layer_exposure_sec(layer_index: usize, is_bottom: bool, timing: &CtbTimingModel) -> f32 {
+    if is_bottom {
+        timing.bottom_exposure_sec
+    } else if (layer_index as u32) < (timing.bottom_layer_count + timing.transition_layer_count) {
+        interpolate_transition_layer_exposure(layer_index, timing)
+    } else {
+        timing.normal_exposure_sec
+    }
 }
 
 fn write_layer_def_ex(
@@ -317,6 +336,8 @@ fn write_layer_def_ex(
     layer_data_abs_offset: u64,
     layout: LayerDefLayout,
     is_bottom: bool,
+    layer_height_mm: f32,
+    is_empty_first_layer: bool,
 ) {
     let (page_number, data_offset) = page_number_and_offset(layer_data_abs_offset);
 
@@ -334,7 +355,7 @@ fn write_layer_def_ex(
         }
     };
 
-    let is_bottom_wait = (layer.index as u32) < timing.wait_time_bottom_layer_count;
+    let is_bottom_wait = is_extended_wait_layer(layer.index, &timing);
 
     // Use bottom lift distance for bottom layers, normal for others
     let lift_distance = if is_bottom {
@@ -377,23 +398,14 @@ fn write_layer_def_ex(
     } else {
         timing.wait_time_after_lift_sec
     };
-    let wait_time_before_cure = if is_bottom_wait {
-        timing.bottom_wait_time_before_cure_sec
-    } else {
-        timing.wait_time_before_cure_sec
-    };
+    // Per-layer schedule: two-tier bottom/normal, or the wait profile when enabled.
+    let wait_time_before_cure = wait_before_cure_sec(layer.index, layer_height_mm, &timing);
     let projector_duty_cycle_pwm = if is_bottom {
         timing.bottom_layer_projector_duty_cycle_pwm
     } else {
         timing.projector_duty_cycle_pwm
     };
-    let exposure_sec = if is_bottom {
-        timing.bottom_exposure_sec
-    } else {
-        if (layer.index as u32) < (timing.bottom_layer_count + timing.transition_layer_count as u32) {
-                interpolate_transition_layer_exposure(layer, &timing)
-            } else { timing.normal_exposure_sec } //Layer exposure time
-    };
+    let exposure_sec = layer_exposure_sec(layer.index, is_bottom, &timing);
     let light_off_sec = if is_bottom {
         timing.bottom_light_off_delay_sec
     } else {
@@ -407,8 +419,82 @@ fn write_layer_def_ex(
     let lift_height_2 = clamp_non_negative(lift_distance2);
     let lift_height_total = clamp_non_negative(lift_height_1 + lift_height_2);
     let retract_height_2 = clamp_non_negative(timing.retract_distance2_mm).min(lift_height_total);
+
+    // Whale3 first-layer movement: layer 1 gets a single slow 2.5 mm lift and retract.
+    let (lift_height_total, lift_speed, lift_height_2, lift_speed2, retract_speed, retract_height_2, retract_speed2) =
+        match first_layer_motion(layer.index, layer_height_mm, &timing) {
+            Some(m) => (
+                m.lift_mm,
+                m.lift_speed_mm_min,
+                0.0,
+                m.lift_speed_mm_min,
+                m.retract_speed_mm_min,
+                0.0,
+                m.retract_speed_mm_min,
+            ),
+            None => (
+                lift_height_total,
+                lift_speed,
+                lift_height_2,
+                lift_speed2,
+                retract_speed,
+                retract_height_2,
+                retract_speed2,
+            ),
+        };
     
     
+    // The inserted blank layer cures nothing and waits for nothing: its own values
+    // replace everything worked out above.
+    let (
+        exposure_sec,
+        light_off_sec,
+        wait_time_before_cure,
+        wait_time_after_cure,
+        wait_time_after_lift,
+        projector_duty_cycle_pwm,
+        lift_height_total,
+        lift_speed,
+        lift_height_2,
+        lift_speed2,
+        retract_speed,
+        retract_height_2,
+        retract_speed2,
+    ) = if is_empty_first_layer {
+        let (lift_mm, lift_speed, retract_speed) = empty_first_layer_motion(layer_height_mm, &timing);
+        (
+            EMPTY_FIRST_LAYER_EXPOSURE_SEC,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            EMPTY_FIRST_LAYER_PWM,
+            lift_mm,
+            lift_speed,
+            0.0,
+            lift_speed,
+            retract_speed,
+            0.0,
+            retract_speed,
+        )
+    } else {
+        (
+            exposure_sec,
+            light_off_sec,
+            wait_time_before_cure,
+            wait_time_after_cure,
+            wait_time_after_lift,
+            projector_duty_cycle_pwm,
+            lift_height_total,
+            lift_speed,
+            lift_height_2,
+            lift_speed2,
+            retract_speed,
+            retract_height_2,
+            retract_speed2,
+        )
+    };
+
     match layout {
         LayerDefLayout::Encrypted => {
             push_u32(out, table_size);
@@ -453,27 +539,87 @@ fn write_layer_def_ex(
     if matches!(layout, LayerDefLayout::Encrypted) { push_u32(out, 0); }
 }
 
-fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> u32 {
-    let mut total = 0.0_f32;
+/// Estimated print time: per layer, exposure + light-off delay + all three waits +
+/// lift/retract travel time, using the same per-layer values the layer table gets.
+fn compute_print_time_seconds(
+    prepared_count: usize,
+    layer_height_mm: f32,
+    timing: CtbTimingModel,
+) -> u32 {
+    let non_negative = |v: f32| if v.is_finite() && v > 0.0 { v } else { 0.0 };
+    // Travel time in seconds for a distance (mm) at a speed (mm/min).
+    let travel = |distance_mm: f32, speed_mm_min: f32| {
+        let (d, s) = (non_negative(distance_mm), non_negative(speed_mm_min));
+        if d > 0.0 && s > 0.0 { d / s * 60.0 } else { 0.0 }
+    };
+
+    let mut total = 0.0_f64;
     for i in 0..prepared_count {
         let is_bottom = (i as u32) < timing.bottom_layer_count;
-        let exposure = if is_bottom {
-            timing.bottom_exposure_sec
-        } else {
-            timing.normal_exposure_sec
-        };
+        let is_bottom_wait = is_extended_wait_layer(i, &timing);
+
+        let exposure = layer_exposure_sec(i, is_bottom, &timing);
         let light_off = if is_bottom {
             timing.bottom_light_off_delay_sec
         } else {
             timing.light_off_delay_sec
         };
+        let (lift1, lift2, lift_speed, lift_speed2, retract_speed, retract_speed2) = if is_bottom {
+            (
+                timing.bottom_lift_distance_mm,
+                timing.bottom_lift_distance2_mm,
+                timing.bottom_lift_speed_mm_min,
+                timing.bottom_lift_speed2_mm_min,
+                timing.bottom_retract_speed_mm_min,
+                timing.bottom_retract_speed2_mm_min,
+            )
+        } else {
+            (
+                timing.lift_distance_mm,
+                timing.lift_distance2_mm,
+                timing.lift_speed_mm_min,
+                timing.lift_speed2_mm_min,
+                timing.retract_speed_mm_min,
+                timing.retract_speed2_mm_min,
+            )
+        };
+        let lift_total = non_negative(lift1) + non_negative(lift2);
+        let retract2 = non_negative(timing.retract_distance2_mm).min(lift_total);
+        let motion = match first_layer_motion(i, layer_height_mm, &timing) {
+            Some(m) => travel(m.lift_mm, m.lift_speed_mm_min) + travel(m.retract_mm, m.retract_speed_mm_min),
+            None => {
+                // The plate comes back down to one layer above where it started.
+                let retract_total = (lift_total - non_negative(layer_height_mm)).max(0.0);
+                let retract2 = retract2.min(retract_total);
+                travel(lift1, lift_speed)
+                    + travel(lift2, lift_speed2)
+                    + travel(retract_total - retract2, retract_speed)
+                    + travel(retract2, retract_speed2)
+            }
+        };
 
-        total += exposure.max(0.0)
-            + light_off.max(0.0)
-            + timing.lift_distance_mm.max(0.0)
-            + timing.retract_speed_mm_min.max(0.0) * 0.0;
+        let (wait_after_cure, wait_after_lift) = if is_bottom_wait {
+            (timing.bottom_wait_time_after_cure_sec, timing.bottom_wait_time_after_lift_sec)
+        } else {
+            (timing.wait_time_after_cure_sec, timing.wait_time_after_lift_sec)
+        };
+        let waits = non_negative(wait_before_cure_sec(i, layer_height_mm, &timing))
+            + non_negative(wait_after_cure)
+            + non_negative(wait_after_lift);
+
+        total += (non_negative(exposure) + non_negative(light_off) + motion + waits + CTB_PER_LAYER_OVERHEAD_SEC) as f64;
     }
-    total.round().max(0.0) as u32
+
+    // The inserted blank layer: a flash of exposure and a short hop, no waits.
+    if timing.empty_first_layer {
+        let (lift_mm, lift_speed, retract_speed) = empty_first_layer_motion(layer_height_mm, &timing);
+        total += (EMPTY_FIRST_LAYER_EXPOSURE_SEC
+            + travel(lift_mm, lift_speed)
+            + travel(lift_mm, retract_speed)
+            + CTB_PER_LAYER_OVERHEAD_SEC) as f64;
+    }
+
+    total.round().clamp(0.0, u32::MAX as f64) as u32
 }
 
 pub(super) fn build_ctb_container_bytes_with_progress(
@@ -494,7 +640,20 @@ pub(super) fn build_ctb_container_bytes_with_progress(
     }
     let machine_name_size = machine_name_bytes.len() as u32;
 
-    let layer_count = prepared.len() as u32;
+    // Optional UVTools-style blank layer in front of the real layers. It is held here
+    // and referenced from `effective`, so no layer data is copied.
+    let empty_first = if timing.empty_first_layer {
+        Some(build_empty_first_layer(
+            job.source_width_px,
+            job.source_height_px,
+            build.layer_xor_key,
+        ))
+    } else {
+        None
+    };
+    let effective: Vec<&CtbPreparedLayer> = empty_first.iter().chain(prepared.iter()).collect();
+
+    let layer_count = effective.len() as u32;
 
     let mut offset = CTB_HEADER_SIZE;
 
@@ -543,10 +702,10 @@ pub(super) fn build_ctb_container_bytes_with_progress(
 
     let layers_definition_offset = offset;
 
-    let mut layer_defs_data = Vec::with_capacity(prepared.len() * CTB_LAYER_DEF_EX_SIZE as usize);
+    let mut layer_defs_data = Vec::with_capacity(effective.len() * CTB_LAYER_DEF_EX_SIZE as usize);
     let mut layer_payload_data = Vec::new();
 
-    let print_time_sec = compute_print_time_seconds(prepared.len(), timing);
+    let print_time_sec = compute_print_time_seconds(prepared.len(), job.layer_height_mm, timing);
 
     let preview_offsets = CtbPreviewOffsets {
         large_record_offset: large_preview_record_offset,
@@ -646,11 +805,11 @@ pub(super) fn build_ctb_container_bytes_with_progress(
     assert_eq!(out.len(), layers_definition_offset as usize);
 
     let layer_def_record_size = CTB_LAYER_DEF_SIZE as usize;
-    let layer_defs_total_size = prepared.len() * layer_def_record_size;
+    let layer_defs_total_size = effective.len() * layer_def_record_size;
     let layer_data_start_abs = (layers_definition_offset as u64) + (layer_defs_total_size as u64);
 
-    let total_prepared = prepared.len() as u32;
-    for (idx, layer) in prepared.iter().enumerate() {
+    let total_prepared = effective.len() as u32;
+    for (idx, layer) in effective.iter().enumerate() {
         let layer_data_blob_abs = layer_data_start_abs + (layer_payload_data.len() as u64);
         let layer_data_abs = if caps.extended_layer_def {
             layer_data_blob_abs + CTB_LAYER_DEF_EX_SIZE as u64
@@ -658,11 +817,12 @@ pub(super) fn build_ctb_container_bytes_with_progress(
             layer_data_blob_abs
         };
 
-        let position_z_mm = (layer.index as f32 + 1.0) * job.layer_height_mm;
+        let position_z_mm = layer_position_z_mm(layer.index, job.layer_height_mm, &timing);
 
         let mut layer_def_bytes = Vec::new();
 
         let is_bottom = (layer.index as u32) < timing.bottom_layer_count;
+        let is_empty_first_layer = empty_first.is_some() && idx == 0;
         let layout = if caps.extended_layer_def { LayerDefLayout::Extended } else { LayerDefLayout::Basic };
         write_layer_def_ex(
             &mut layer_def_bytes,
@@ -672,6 +832,8 @@ pub(super) fn build_ctb_container_bytes_with_progress(
             layer_data_abs,
             layout,
             is_bottom,
+            job.layer_height_mm,
+            is_empty_first_layer,
         );
 
         if caps.extended_layer_def {
@@ -681,7 +843,16 @@ pub(super) fn build_ctb_container_bytes_with_progress(
             layer_defs_data.extend_from_slice(&layer_def_bytes);
         }
 
+        // Prepending a layer moves every real layer one position down the file, and the
+        // RLE obfuscation is keyed by position.
+        let data_start = layer_payload_data.len();
         layer_payload_data.extend_from_slice(&layer.encoded);
+        rekey_layer_rle(
+            build.layer_xor_key,
+            layer.index as u32,
+            idx as u32,
+            &mut layer_payload_data[data_start..],
+        );
 
         if let Some(progress) = on_progress {
             progress((idx as u32) + 1, total_prepared.max(1));
@@ -721,12 +892,14 @@ fn write_encrypted_settings(
     push_f32(out, build.bed_size_z_mm.max(0.0));
     push_u32(out, build.created_date_unix);
     push_u32(out, build.modified_date_unix);
-    push_f32(out, job.layer_height_mm * layer_count as f32);
+    // The inserted blank layer shares the real first layer's Z, so it adds no height,
+    // but it does count as one more bottom layer so the real bottom layers keep theirs.
+    push_f32(out, job.layer_height_mm * layer_count.saturating_sub(empty_layer_count(&timing)) as f32);
     push_f32(out, job.layer_height_mm);
     push_f32(out, timing.normal_exposure_sec);
     push_f32(out, timing.bottom_exposure_sec);
     push_f32(out, timing.light_off_delay_sec);
-    push_u32(out, timing.bottom_layer_count);
+    push_u32(out, timing.bottom_layer_count + empty_layer_count(&timing));
     push_u32(out, job.source_width_px);
     push_u32(out, job.source_height_px);
     push_u32(out, layer_count);
@@ -829,8 +1002,19 @@ pub(super) fn build_ctb_encrypted_container_bytes_with_progress(
     let disclaimer_bytes = decode_embedded_disclaimer_bytes()?;
     let (key, iv) = ctb_default_key_iv();
 
-    let layer_count = prepared.len() as u32;
-    let print_time_sec = compute_print_time_seconds(prepared.len(), timing);
+    let empty_first = if timing.empty_first_layer {
+        Some(build_empty_first_layer(
+            job.source_width_px,
+            job.source_height_px,
+            build.layer_xor_key,
+        ))
+    } else {
+        None
+    };
+    let effective: Vec<&CtbPreparedLayer> = empty_first.iter().chain(prepared.iter()).collect();
+
+    let layer_count = effective.len() as u32;
+    let print_time_sec = compute_print_time_seconds(prepared.len(), job.layer_height_mm, timing);
     let machine_name_bytes = build.machine_name.as_bytes().to_vec();
     let machine_name_size = machine_name_bytes.len() as u32;
 
@@ -876,16 +1060,19 @@ pub(super) fn build_ctb_encrypted_container_bytes_with_progress(
     out.resize(out.len() + layer_pointer_table_size, 0);
 
     let mut layer_pointer_entries: Vec<(u32, u32)> = Vec::with_capacity(layer_count as usize);
-    let total_layers = prepared.len() as u32;
-    for (idx, layer) in prepared.iter().enumerate() {
+    let total_layers = effective.len() as u32;
+    for (idx, layer) in effective.iter().enumerate() {
         let layer_def_abs = out.len() as u64;
         let layer_data_abs = layer_def_abs + CTB_ENCRYPTED_LAYER_DEF_SIZE as u64;
         let (layer_page, layer_offset) = page_number_and_offset(layer_def_abs);
         layer_pointer_entries.push((layer_offset, layer_page));
 
         let is_bottom = (layer.index as u32) < timing.bottom_layer_count;
-        write_layer_def_ex(&mut out, layer, (layer.index as f32 + 1.0) * job.layer_height_mm, timing, layer_data_abs, LayerDefLayout::Encrypted, is_bottom);
+        let is_empty_first_layer = empty_first.is_some() && idx == 0;
+        write_layer_def_ex(&mut out, layer, layer_position_z_mm(layer.index, job.layer_height_mm, &timing), timing, layer_data_abs, LayerDefLayout::Encrypted, is_bottom, job.layer_height_mm, is_empty_first_layer);
+        let data_start = out.len();
         out.extend_from_slice(&layer.encoded);
+        rekey_layer_rle(build.layer_xor_key, layer.index as u32, idx as u32, &mut out[data_start..]);
 
         if let Some(progress) = on_progress {
             progress((idx as u32) + 1, total_layers.max(1));

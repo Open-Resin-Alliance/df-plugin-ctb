@@ -2,21 +2,102 @@
   "displayName": "CTB Resin Settings",
   "replacesDefaultMaterialSettings": true,
   "tabs": [
-    { "id": "simple", "title": "Simple", "order": 10 }
+    {
+      "id": "simple",
+      "title": "Simple",
+      "order": 10
+    }
   ],
   "sections": [
-    { "id": "global", "title": "General Settings", "tabId": "simple", "order": 9 },
-    { "id": "burn-in", "title": "Burn In Layers", "tabId": "simple", "order": 10 },
-    { "id": "normal", "title": "Normal Layers", "tabId": "simple", "order": 20 },
-    { "id": "timing", "title": "Timing", "tabId": "simple", "order": 30 },
-    { "id": "light", "title": "Light Settings", "tabId": "simple", "order": 40 }
+    {
+      "id": "global",
+      "title": "General Settings",
+      "tabId": "simple",
+      "order": 9
+    },
+    {
+      "id": "burn-in",
+      "title": "Bottom Layers",
+      "tabId": "simple",
+      "order": 10
+    },
+    {
+      "id": "normal",
+      "title": "Normal Layers",
+      "tabId": "simple",
+      "order": 20
+    },
+    {
+      "id": "timing",
+      "title": "Timing",
+      "tabId": "simple",
+      "order": 30
+    },
+    {
+      "id": "light",
+      "title": "Light Settings",
+      "tabId": "simple",
+      "order": 40
+    },
+    {
+      "id": "wait-times",
+      "title": "Wait Times",
+      "tabId": "simple",
+      "order": 35
+    }
   ],
   "cards": [
-    { "id": "global-settings", "title": "General Settings", "tabId": "simple", "sectionId": "normal", "order": 9 },
-    { "id": "burn-in-settings", "title": "Burn In Layers", "tabId": "simple", "sectionId": "burn-in", "order": 10 },
-    { "id": "normal-settings", "title": "Normal Layers", "tabId": "simple", "sectionId": "normal", "order": 20 },
-    { "id": "timing-settings", "title": "Timing", "tabId": "simple", "sectionId": "timing", "order": 30 },
-    { "id": "light-settings", "title": "Light Settings", "tabId": "simple", "sectionId": "light", "order": 40 }
+    {
+      "id": "global-settings",
+      "title": "General Settings",
+      "tabId": "simple",
+      "sectionId": "normal",
+      "order": 9
+    },
+    {
+      "id": "burn-in-settings",
+      "title": "Bottom Layers",
+      "tabId": "simple",
+      "sectionId": "burn-in",
+      "order": 10
+    },
+    {
+      "id": "normal-settings",
+      "title": "Normal Layers",
+      "tabId": "simple",
+      "sectionId": "normal",
+      "order": 20
+    },
+    {
+      "id": "timing-settings",
+      "title": "Timing",
+      "tabId": "simple",
+      "sectionId": "timing",
+      "order": 30
+    },
+    {
+      "id": "light-settings",
+      "title": "Light Settings",
+      "tabId": "simple",
+      "sectionId": "light",
+      "order": 40
+    },
+    {
+      "id": "first-layer-settings",
+      "title": "First Layer Movement",
+      "tabId": "simple",
+      "sectionId": "burn-in",
+      "order": 15,
+      "description": "How the plate moves before layer 1. The two Whale3 modes lift 2.5 mm and come back down at 20 mm/min, and move every layer down with layer 1. At your own responsibility: the plate is driven to or below its home position."
+    },
+    {
+      "id": "wait-times-settings",
+      "title": "Wait Times",
+      "tabId": "simple",
+      "sectionId": "wait-times",
+      "order": 35,
+      "description": "Every wait value. Bottom values apply to the first Bottom Wait Layers layers; the rest use the normal values. Switch on the schedule below for separate layer 1 / layer 2 waits and a gradual step down to the normal wait before cure."
+    }
   ],
   "fields": [
     {
@@ -27,18 +108,28 @@
       "min": 0.001,
       "max": 1,
       "step": 0.001,
-      "placement": { "tabId": "simple", "sectionId": "global", "cardId": "global-settings", "order": 10 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "global",
+        "cardId": "global-settings",
+        "order": 10
+      },
       "metadataPath": "material.layerHeightMm"
     },
     {
       "key": "bottomLayerCount",
-      "label": "Burn-in Layers",
+      "label": "Bottom Layers",
       "kind": "integer",
       "defaultValue": 5,
       "min": 0,
       "max": 200,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 10 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "burn-in-settings",
+        "order": 10
+      },
       "metadataPath": "material.bottomLayerCount"
     },
     {
@@ -49,51 +140,76 @@
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 20 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "burn-in-settings",
+        "order": 20
+      },
       "metadataPath": "ctb.transitionLayerCount"
     },
     {
       "key": "bottomExposureSec",
-      "label": "Burn-in Exposure (s)",
+      "label": "Bottom Exposure (s)",
       "kind": "number",
       "defaultValue": 25,
       "min": 0,
       "max": 300,
       "step": 0.1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 30 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "burn-in-settings",
+        "order": 30
+      },
       "metadataPath": "material.bottomExposureSec"
     },
     {
       "key": "bottomLiftDistanceMm",
-      "label": "Burn-in Lift Distance (mm)",
+      "label": "Bottom Lift Distance (mm)",
       "kind": "number",
       "defaultValue": 6,
       "min": 0,
       "max": 50,
       "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 40 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "burn-in-settings",
+        "order": 40
+      },
       "metadataPath": "material.bottomLiftDistanceMm"
     },
     {
       "key": "bottomLiftSpeedMmMin",
-      "label": "Burn-in Lift Speed (mm/min)",
+      "label": "Bottom Lift Speed (mm/min)",
       "kind": "number",
       "defaultValue": 30,
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 50 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "burn-in-settings",
+        "order": 50
+      },
       "metadataPath": "material.bottomLiftSpeedMmMin"
     },
     {
       "key": "bottomRetractSpeedMmMin",
-      "label": "Burn-in Retract Speed (mm/min)",
+      "label": "Bottom Retract Speed (mm/min)",
       "kind": "number",
       "defaultValue": 90,
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "burn-in", "cardId": "burn-in-settings", "order": 60 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "burn-in-settings",
+        "order": 60
+      },
       "metadataPath": "material.bottomRetractSpeedMmMin"
     },
     {
@@ -104,7 +220,12 @@
       "min": 0,
       "max": 120,
       "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 20 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "normal",
+        "cardId": "normal-settings",
+        "order": 20
+      },
       "metadataPath": "material.normalExposureSec"
     },
     {
@@ -115,7 +236,12 @@
       "min": 0,
       "max": 50,
       "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 30 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "normal",
+        "cardId": "normal-settings",
+        "order": 30
+      },
       "metadataPath": "material.liftDistanceMm"
     },
     {
@@ -126,7 +252,12 @@
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 40 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "normal",
+        "cardId": "normal-settings",
+        "order": 40
+      },
       "metadataPath": "material.liftSpeedMmMin"
     },
     {
@@ -137,52 +268,323 @@
       "min": 0,
       "max": 100000,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "normal", "cardId": "normal-settings", "order": 50 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "normal",
+        "cardId": "normal-settings",
+        "order": 50
+      },
       "metadataPath": "material.retractSpeedMmMin"
     },
     {
-      "key": "waitTimeBeforeCureSec",
-      "label": "Wait Before Cure (s)",
-      "kind": "number",
-      "defaultValue": 0,
-      "min": 0,
-      "max": 120,
-      "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "timing", "cardId": "timing-settings", "order": 40 },
-      "metadataPath": "ctb.waitTimeBeforeCureSec"
-    },
-    {
-      "key": "waitTimeAfterCureSec",
-      "label": "Wait After Cure (s)",
-      "kind": "number",
-      "defaultValue": 0,
-      "min": 0,
-      "max": 120,
-      "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "timing", "cardId": "timing-settings", "order": 50 },
-      "metadataPath": "ctb.waitTimeAfterCureSec"
-    },
-    {
-      "key": "waitTimeAfterLiftSec",
-      "label": "Wait After Lift (s)",
-      "kind": "number",
-      "defaultValue": 0,
-      "min": 0,
-      "max": 120,
-      "step": 0.01,
-      "placement": { "tabId": "simple", "sectionId": "timing", "cardId": "timing-settings", "order": 60 },
-      "metadataPath": "ctb.waitTimeAfterLiftSec"
-    },
-    {
       "key": "projectorPwmPercent",
-      "label": "Projector PWM (%)",
+      "label": "Normal Projector PWM (%)",
       "kind": "number",
       "defaultValue": 100,
       "min": 1,
       "max": 100,
       "step": 1,
-      "placement": { "tabId": "simple", "sectionId": "light", "cardId": "light-settings", "order": 70 },
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "light",
+        "cardId": "light-settings",
+        "order": 70
+      },
       "metadataPath": "ctb.projectorPwmPercent"
+    },
+    {
+      "key": "bottomProjectorPwmPercent",
+      "label": "Bottom Projector PWM (%)",
+      "kind": "number",
+      "defaultValue": 100,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "description": "Light intensity for the bottom layers.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "light",
+        "cardId": "light-settings",
+        "order": 75
+      },
+      "metadataPath": "ctb.bottomProjectorPwmPercent"
+    },
+    {
+      "key": "emptyFirstLayer",
+      "label": "Empty First Layer",
+      "kind": "boolean",
+      "defaultValue": false,
+      "description": "For printers that ignore the first layer's wait times. Adds a throwaway blank layer in front of the print, at the same height as the first layer, so the real first layer is no longer the printer's first layer. It cures nothing and adds no height.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 5
+      },
+      "metadataPath": "ctb.emptyFirstLayer"
+    },
+    {
+      "key": "waitTimeBottomLayerCount",
+      "label": "Bottom Wait Layers",
+      "kind": "integer",
+      "defaultValue": 5,
+      "min": 0,
+      "max": 200,
+      "step": 1,
+      "description": "How many layers from the bottom use the bottom wait values. Raised to the bottom layer count if set lower.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 10
+      },
+      "metadataPath": "material.waitTimeBottomLayerCount"
+    },
+    {
+      "key": "bottomWaitTimeBeforeCureSec",
+      "label": "Bottom Wait Before Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 0.01,
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 20
+      },
+      "metadataPath": "ctb.bottomWaitTimeBeforeCureSec"
+    },
+    {
+      "key": "waitTimeBeforeCureSec",
+      "label": "Normal Wait Before Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 0.01,
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 25
+      },
+      "metadataPath": "ctb.waitTimeBeforeCureSec"
+    },
+    {
+      "key": "bottomWaitTimeAfterCureSec",
+      "label": "Bottom Wait After Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 0.01,
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 30
+      },
+      "metadataPath": "ctb.bottomWaitTimeAfterCureSec"
+    },
+    {
+      "key": "waitTimeAfterCureSec",
+      "label": "Normal Wait After Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 0.01,
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 35
+      },
+      "metadataPath": "ctb.waitTimeAfterCureSec"
+    },
+    {
+      "key": "bottomWaitTimeAfterLiftSec",
+      "label": "Bottom Wait After Lift (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 0.01,
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 40
+      },
+      "metadataPath": "ctb.bottomWaitTimeAfterLiftSec"
+    },
+    {
+      "key": "waitTimeAfterLiftSec",
+      "label": "Normal Wait After Lift (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 0.01,
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 45
+      },
+      "metadataPath": "ctb.waitTimeAfterLiftSec"
+    },
+    {
+      "key": "firstLayerMoveMode",
+      "label": "First Layer Movement",
+      "kind": "select",
+      "defaultValue": "default",
+      "options": [
+        {
+          "value": "default",
+          "label": "Default (bottom lift, layer 1 one layer above home)"
+        },
+        {
+          "value": "below-home",
+          "label": "Special: layer 1 one layer below home"
+        },
+        {
+          "value": "home",
+          "label": "Return to home: layer 1 at home"
+        }
+      ],
+      "description": "Special: lift 2.5 mm, retract 2.5 mm plus one layer height (works around Chituboard placing the first layer one layer too high). Return to home: lift 2.5 mm, retract 2.5 mm.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "burn-in",
+        "cardId": "first-layer-settings",
+        "order": 10
+      },
+      "metadataPath": "ctb.firstLayerMoveMode"
+    },
+    {
+      "key": "waitProfileEnabled",
+      "label": "Layer 1 / Layer 2 and Transition Schedule",
+      "kind": "boolean",
+      "defaultValue": false,
+      "description": "Applies to wait before cure only. Off: bottom layers get the bottom wait, the rest get the normal wait.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 50
+      },
+      "metadataPath": "ctb.waitProfileEnabled"
+    },
+    {
+      "key": "waitProfileLayer1Sec",
+      "label": "Layer 1 Wait Before Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 1,
+      "description": "0 = same as Bottom Wait Before Cure.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 60
+      },
+      "metadataPath": "ctb.waitProfileLayer1Sec"
+    },
+    {
+      "key": "waitProfileLayer2Sec",
+      "label": "Layer 2 Wait Before Cure (s)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 1,
+      "description": "0 = same as Bottom Wait Before Cure.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 70
+      },
+      "metadataPath": "ctb.waitProfileLayer2Sec"
+    },
+    {
+      "key": "waitProfileHoldHeightMm",
+      "label": "Hold Bottom Wait Up To (mm)",
+      "kind": "number",
+      "defaultValue": 0,
+      "min": 0,
+      "max": 500,
+      "step": 0.1,
+      "description": "0 = bottom wait layers only, then straight to the normal wait.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 80
+      },
+      "metadataPath": "ctb.waitProfileHoldHeightMm"
+    },
+    {
+      "key": "waitProfileTransitionMethod",
+      "label": "Transition Method",
+      "kind": "select",
+      "defaultValue": "time",
+      "options": [
+        {
+          "value": "time",
+          "label": "Decrease per layer"
+        },
+        {
+          "value": "distance",
+          "label": "Over a distance"
+        }
+      ],
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 90
+      },
+      "metadataPath": "ctb.waitProfileTransitionMethod"
+    },
+    {
+      "key": "waitProfileDecreasePerLayerSec",
+      "label": "Decrease Per Layer (s)",
+      "kind": "number",
+      "defaultValue": 1,
+      "min": 0,
+      "max": 3600,
+      "step": 0.1,
+      "description": "Used with \"Decrease per layer\". 0 = switch straight to the normal wait.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 100
+      },
+      "metadataPath": "ctb.waitProfileDecreasePerLayerSec"
+    },
+    {
+      "key": "waitProfileTransitionDistanceMm",
+      "label": "Transition Distance (mm)",
+      "kind": "number",
+      "defaultValue": 1,
+      "min": 0,
+      "max": 500,
+      "step": 0.1,
+      "description": "Used with \"Over a distance\". Height over which the wait steps down to the normal wait.",
+      "placement": {
+        "tabId": "simple",
+        "sectionId": "wait-times",
+        "cardId": "wait-times-settings",
+        "order": 110
+      },
+      "metadataPath": "ctb.waitProfileTransitionDistanceMm"
     }
   ]
 }
