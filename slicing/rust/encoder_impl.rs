@@ -1038,10 +1038,25 @@ mod tests {
         super::CtbPluginEncoder.encode_container_from_rendered_layers(job, rendered, &[]).unwrap()
     }
 
-    fn assert_range_fixture(version: &str, motion: bool) {
+    fn assert_range_fixture(version: &str, motion: bool, millimeters: bool) {
         use crate::encoders::FormatEncoder;
         let encoder = super::CtbPluginEncoder;
-        let (job, rendered) = range_fixture(version, motion);
+        let (mut job, rendered) = range_fixture(version, motion);
+        if millimeters {
+            let metadata: serde_json::Value = serde_json::from_str(&job.metadata_json).unwrap();
+            let mut ranges = metadata["layerSettingsRanges"].clone();
+            for (range, (start, end)) in ranges.as_array_mut().unwrap().iter_mut()
+                .zip([(0.15, 0.5), (0.25, 0.3), (0.3, 0.35)])
+            {
+                let object = range.as_object_mut().unwrap();
+                object.remove("startLayer");
+                object.remove("endLayer");
+                object.insert("unit".into(), serde_json::json!("mm"));
+                object.insert("startMm".into(), serde_json::json!(start));
+                object.insert("endMm".into(), serde_json::json!(end));
+            }
+            replace_range_metadata(&mut job, ranges);
+        }
         let bytes = encode_ranges(&job, &rendered);
         let (flag, layers) = decode_range_layers(&bytes);
         let number = version.as_bytes()[1] - b'0';
@@ -1104,13 +1119,20 @@ mod tests {
 
     #[test]
     fn layer_settings_ranges_v2_exposure_lightoff_records() {
-        assert_range_fixture("v2", false);
+        assert_range_fixture("v2", false, false);
     }
 
     #[test]
     fn layer_settings_ranges_extended_and_encrypted_records() {
         for version in ["v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
-            assert_range_fixture(version, true);
+            assert_range_fixture(version, true, false);
+        }
+    }
+
+    #[test]
+    fn layer_settings_ranges_mm_v2_projection_extended_and_encrypted_records() {
+        for version in ["v2", "v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            assert_range_fixture(version, version != "v2", true);
         }
     }
 
@@ -1230,7 +1252,7 @@ mod tests {
         let encoder = super::CtbPluginEncoder;
         for version in ["v2", "v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
             let (valid, rendered) = range_fixture(version, version != "v2");
-            for kind in 0..6 {
+            for kind in 0..10 {
                 let mut job = valid.clone();
                 match kind {
                     0 => replace_range_metadata(&mut job, serde_json::json!(null)),
@@ -1252,7 +1274,19 @@ mod tests {
                     4 => replace_range_metadata(&mut job, serde_json::json!([
                         {"id":"precision", "startLayer":1, "endLayer":1, "settings":{"liftHeightMm":8,"liftHeight2Mm":8.000000000000002}}
                     ])),
-                    _ => job.metadata_json = "not-json".to_string(),
+                    5 => job.metadata_json = "not-json".to_string(),
+                    6 => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"mixed", "unit":"mm", "startMm":0.0, "endMm":0.3, "startLayer":1, "settings":{"exposureSec":4}}
+                    ])),
+                    7 => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"inverted", "unit":"mm", "startMm":0.3, "endMm":0.1, "settings":{"exposureSec":4}}
+                    ])),
+                    8 => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"outside", "unit":"mm", "startMm":20.0, "endMm":30.0, "settings":{"retractHeightMm":8}}
+                    ])),
+                    _ => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"motion", "unit":"mm", "startMm":0.05, "endMm":0.6, "settings":{"liftHeightMm":1,"liftHeight2Mm":2}}
+                    ])),
                 }
                 for exists in [false, true] {
                     for route in 0..3 {
