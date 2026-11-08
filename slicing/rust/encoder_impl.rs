@@ -313,6 +313,10 @@ pub fn create_plugin_encoder() -> Vec<Box<dyn FormatEncoder>> {
 // Parsing and layout logic live in `ctb_metadata.rs` and `ctb_layout.rs`.
 
 impl FormatEncoder for CtbPluginEncoder {
+    fn supports_layer_settings(&self) -> bool {
+        true
+    }
+
     fn output_format(&self) -> &'static str {
         ".ctb"
     }
@@ -900,6 +904,386 @@ mod tests {
             anti_aliasing_level: "Off".to_string(),
             metadata_json: "{}".to_string(),
             ..Default::default()
+        }
+    }
+
+
+    #[derive(Debug, PartialEq)]
+    struct DecodedRangeLayer {
+        exposure: f32,
+        light_off: f32,
+        motion: Vec<f32>,
+        mask: Vec<u8>,
+    }
+
+    fn range_u32(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn range_f32(bytes: &[u8], offset: usize) -> f32 {
+        f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    // Reopen actual table pointers, including AES settings and page-relative addresses.
+    fn decode_range_layers(bytes: &[u8]) -> (u8, Vec<DecodedRangeLayer>) {
+        use super::ctb_types::*;
+        let encrypted = range_u32(bytes, 0) == CTB_MAGIC_V5_ENCRYPTED;
+        let (count, table, xor, flag, extended) = if encrypted {
+            let mut settings = bytes[48..336].to_vec();
+            let (key, iv) = super::ctb_crypto::ctb_default_key_iv();
+            super::ctb_crypto::ctb_decrypt_in_place_no_padding(&mut settings, &key, &iv).unwrap();
+            (range_u32(&settings, 64), range_u32(&settings, 8) as usize,
+                range_u32(&settings, 128), settings[171], true)
+        } else {
+            let slicer = range_u32(bytes, 104) as usize;
+            (range_u32(bytes, 68), range_u32(bytes, 64) as usize,
+                range_u32(bytes, 100), bytes[slicer + 39], range_u32(bytes, 4) >= 3)
+        };
+        let address = |offset: u32, page: u32| -> usize {
+            (u64::from(page) * CTB_PAGE_SIZE + u64::from(offset)) as usize
+        };
+        let layers = (0..count).map(|index| {
+            let (record, data, size) = if encrypted {
+                let pointer = table + index as usize * 16;
+                let record = address(range_u32(bytes, pointer), range_u32(bytes, pointer + 4));
+                assert_eq!(range_u32(bytes, record), CTB_ENCRYPTED_LAYER_DEF_SIZE);
+                (record, address(range_u32(bytes, record + 16), range_u32(bytes, record + 20)),
+                    range_u32(bytes, record + 24) as usize)
+            } else {
+                let entry = table + index as usize * CTB_LAYER_DEF_SIZE as usize;
+                let data = address(range_u32(bytes, entry + 12), range_u32(bytes, entry + 20));
+                let record = if extended { data - CTB_LAYER_DEF_EX_SIZE as usize } else { entry };
+                if extended {
+                    assert_eq!(&bytes[entry..entry + 36], &bytes[record..record + 36]);
+                    assert_eq!(range_u32(bytes, record + 24), CTB_LAYER_DEF_EX_SIZE);
+                }
+                (record, data, range_u32(bytes, entry + 16) as usize)
+            };
+            let mut encoded = bytes[data..data + size].to_vec();
+            ctb_layer_rle_xor(xor, index, &mut encoded);
+            DecodedRangeLayer {
+                exposure: range_f32(bytes, record + if encrypted { 8 } else { 4 }),
+                light_off: range_f32(bytes, record + if encrypted { 12 } else { 8 }),
+                motion: if extended {
+                    (0..11).map(|field| range_f32(bytes, record + 40 + field * 4)).collect()
+                } else { Vec::new() },
+                mask: super::decode_ctb_rle(&encoded, 16),
+            }
+        }).collect();
+        (flag, layers)
+    }
+
+    fn range_fixture(version: &str, motion: bool) -> (SliceJobV3, crate::types::RenderedLayersV3) {
+        let mut job = make_test_job();
+        job.total_layers = 12;
+        job.format_version = Some(version.to_string());
+        let mut wide = serde_json::json!({"exposureSec": 4, "lightOffDelaySec": 1.5});
+        if motion {
+            wide.as_object_mut().unwrap().extend(serde_json::json!({
+                "liftHeightMm": 8, "liftHeight2Mm": 3,
+                "liftSpeedMmMin": 120, "liftSpeed2MmMin": 240,
+                "retractHeight2Mm": 2, "retractSpeedMmMin": 180, "retractSpeed2MmMin": 300,
+                "waitTimeBeforeCureSec": 0, "waitTimeAfterCureSec": 0,
+                "waitTimeAfterLiftSec": 0, "lightPwm": 0
+            }).as_object().unwrap().clone());
+        }
+        job.metadata_json = serde_json::json!({
+            "ctb": {
+                "createdDate": 1700000000, "modifiedDate": 1700000000,
+                "settingsMode": "twostage", "perLayerSettings": false,
+                "normalExposureSec": 2, "bottomExposureSec": 10,
+                "bottomLayerCount": 2, "transitionLayerCount": 2,
+                "lightOffDelaySec": 0.75, "bottomLightOffDelaySec": 1.25,
+                "bottomLiftDistanceMm": 2, "bottomLiftDistance2Mm": 1,
+                "bottomLiftSpeedMmMin": 40, "bottomLiftSpeed2MmMin": 80,
+                "liftDistanceMm": 5, "liftDistance2Mm": 1,
+                "liftSpeedMmMin": 60, "liftSpeed2MmMin": 90,
+                "retractDistance2Mm": 0.5, "retractSpeedMmMin": 100, "retractSpeed2MmMin": 150,
+                "bottomRetractSpeedMmMin": 50, "bottomRetractSpeed2MmMin": 75,
+                "waitTimeBottomLayerCount": 4,
+                "bottomWaitTimeBeforeCureSec": 1.25, "bottomWaitTimeAfterCureSec": 2.25,
+                "bottomWaitTimeAfterLiftSec": 3.25,
+                "waitTimeBeforeCureSec": 4.25, "waitTimeAfterCureSec": 5.25, "waitTimeAfterLiftSec": 6.25,
+                "projectorPwmPercent": 80, "bottomProjectorPwmPercent": 60
+            },
+            "layerSettingsRanges": [
+                {"id":"A", "startLayer":3, "endLayer":10, "settings":wide},
+                {"id":"B", "startLayer":5, "endLayer":6, "settings":{"exposureSec":7}},
+                {"id":"C", "startLayer":6, "endLayer":7, "settings":{"exposureSec":9}}
+            ]
+        }).to_string();
+        let rendered = crate::types::RenderedLayersV3 {
+            raw_mask_layers: Some((0..12).map(|index| {
+                (0..16).map(|pixel| if (pixel + index) % 3 == 0 { 255 } else { 0 }).collect()
+            }).collect()),
+            ..Default::default()
+        };
+        (job, rendered)
+    }
+
+    fn replace_range_metadata(job: &mut SliceJobV3, ranges: serde_json::Value) {
+        let mut metadata: serde_json::Value = serde_json::from_str(&job.metadata_json).unwrap();
+        metadata["layerSettingsRanges"] = ranges;
+        job.metadata_json = metadata.to_string();
+    }
+
+    fn range_path() -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        std::env::temp_dir().join(format!("ctb-layer-settings-ranges-{}-{}.ctb", std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)))
+    }
+
+    fn encode_ranges(job: &SliceJobV3, rendered: &crate::types::RenderedLayersV3) -> Vec<u8> {
+        use crate::encoders::FormatEncoder;
+        super::CtbPluginEncoder.encode_container_from_rendered_layers(job, rendered, &[]).unwrap()
+    }
+
+    fn assert_range_fixture(version: &str, motion: bool) {
+        use crate::encoders::FormatEncoder;
+        let encoder = super::CtbPluginEncoder;
+        let (job, rendered) = range_fixture(version, motion);
+        let bytes = encode_ranges(&job, &rendered);
+        let (flag, layers) = decode_range_layers(&bytes);
+        let number = version.as_bytes()[1] - b'0';
+        assert_eq!(flag, number << 4, "{version}");
+        assert_eq!(layers.iter().map(|layer| layer.exposure).collect::<Vec<_>>(),
+            vec![10.,10.,4.,4.,7.,9.,9.,4.,4.,4.,2.,2.], "{version}");
+        let mut baseline_job = job.clone();
+        replace_range_metadata(&mut baseline_job, serde_json::json!([]));
+        let baseline = decode_range_layers(&encode_ranges(&baseline_job, &rendered)).1;
+        for (index, layer) in layers.iter().enumerate() {
+            assert_eq!(layer.mask, baseline[index].mask, "{version} layer {}", index + 1);
+            let expected_mask: Vec<_> = rendered.raw_mask_layers.as_ref().unwrap()[index].iter()
+                .map(|&pixel| pixel & 0xfe).collect();
+            assert_eq!(layer.mask, expected_mask);
+            if (2..10).contains(&index) {
+                assert_eq!(layer.light_off, 1.5);
+                if motion {
+                    assert_eq!(layer.motion, vec![8.,120.,3.,240.,180.,2.,300.,0.,0.,0.,0.]);
+                }
+            } else {
+                assert_eq!(layer, &baseline[index]);
+            }
+        }
+        let path = range_path();
+        encoder.encode_container_to_path(&job, &rendered, &[], &path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_file(&path).unwrap();
+        let progress = encoder.encode_container_from_rendered_layers_with_progress(
+            &job, &rendered, &[], Some(&|_, _| {})).unwrap();
+        assert_eq!(progress, bytes);
+
+        // Physical indices, not arrival order, determine both payload and records.
+        for use_store in [false, true] {
+            let mut stream = encoder.create_rle_stream_encoder(&job).unwrap().unwrap();
+            let parallel = stream.parallel_encode_fn().unwrap();
+            for index in (0..12).rev() {
+                let runs: Vec<_> = rendered.raw_mask_layers.as_ref().unwrap()[index].iter()
+                    .map(|&value| crate::rle::RleRun { length: 1, value }).collect();
+                if use_store {
+                    stream.store_encoded_layer(index as u32, parallel(index as u32, &runs).unwrap());
+                } else {
+                    stream.consume_rle_layer(index as u32, runs).unwrap();
+                }
+            }
+            assert_eq!(decode_range_layers(&stream.finalize_to_bytes().unwrap()), (flag, layers_from_bytes(&bytes)));
+        }
+        let mut raw = encoder.create_raw_mask_stream_encoder(&job).unwrap().unwrap();
+        for index in (0..12).rev() {
+            raw.consume_raw_mask_layer(index as u32, rendered.raw_mask_layers.as_ref().unwrap()[index].clone()).unwrap();
+        }
+        let path = range_path();
+        raw.finalize_to_path(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn layers_from_bytes(bytes: &[u8]) -> Vec<DecodedRangeLayer> {
+        decode_range_layers(bytes).1
+    }
+
+    #[test]
+    fn layer_settings_ranges_v2_exposure_lightoff_records() {
+        assert_range_fixture("v2", false);
+    }
+
+    #[test]
+    fn layer_settings_ranges_extended_and_encrypted_records() {
+        for version in ["v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            assert_range_fixture(version, true);
+        }
+    }
+
+    #[test]
+    fn layer_settings_ranges_v2_rejects_motion_and_all_versions_reject_total_retract() {
+        use crate::encoders::FormatEncoder;
+        use crate::layer_settings::LayerSettingField;
+        let encoder = super::CtbPluginEncoder;
+        for field in LayerSettingField::ALL {
+            if matches!(field, LayerSettingField::ExposureSec | LayerSettingField::LightOffDelaySec) { continue; }
+            let (mut job, rendered) = range_fixture("v2", false);
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"outside", "startLayer":100, "endLayer":200, "settings":{(field.as_str()):1}},
+                {"id":"shadow", "startLayer":100, "endLayer":200, "settings":{"exposureSec":2}}
+            ]));
+            let result = encoder.encode_container_from_rendered_layers(&job, &rendered, &[]);
+            assert!(matches!(result, Err(crate::engine::SlicerV3Error::UnsupportedOutput(message))
+                if message.contains(field.as_str())), "{}", field.as_str());
+        }
+        for version in ["v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            let (mut job, rendered) = range_fixture(version, true);
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"outside", "startLayer":100, "endLayer":200, "settings":{"retractHeightMm":8}}
+            ]));
+            assert!(matches!(encoder.encode_container_from_rendered_layers(&job, &rendered, &[]),
+                Err(crate::engine::SlicerV3Error::UnsupportedOutput(message)) if message.contains("retractHeightMm")));
+        }
+    }
+
+    #[test]
+    fn layer_settings_ranges_activation_empty_beyond_eof_and_uncovered_baselines() {
+        for version in ["v2", "v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            let (mut job, rendered) = range_fixture(version, false);
+            replace_range_metadata(&mut job, serde_json::json!([]));
+            let empty = encode_ranges(&job, &rendered);
+            assert_eq!(decode_range_layers(&empty).0, 0);
+            let mut metadata: serde_json::Value = serde_json::from_str(&job.metadata_json).unwrap();
+            metadata.as_object_mut().unwrap().remove("layerSettingsRanges");
+            job.metadata_json = metadata.to_string();
+            assert_eq!(encode_ranges(&job, &rendered), empty);
+            metadata["ctb"]["perLayerSettings"] = serde_json::json!(true);
+            job.metadata_json = metadata.to_string();
+            let legacy_active = encode_ranges(&job, &rendered);
+            let expected = if version.ends_with("enc") { 0x40 } else { (version.as_bytes()[1] - b'0') << 4 };
+            assert_eq!(decode_range_layers(&legacy_active).0, expected);
+            replace_range_metadata(&mut job, serde_json::json!([]));
+            assert_eq!(encode_ranges(&job, &rendered), legacy_active);
+            metadata["ctb"]["perLayerSettings"] = serde_json::json!(false);
+            job.metadata_json = metadata.to_string();
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"outside", "startLayer":100, "endLayer":4294967295_u32, "settings":{"exposureSec":9}}
+            ]));
+            let (flag, beyond) = decode_range_layers(&encode_ranges(&job, &rendered));
+            assert_eq!(flag, (version.as_bytes()[1] - b'0') << 4);
+            assert_eq!(beyond, layers_from_bytes(&empty));
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"single", "startLayer":8, "endLayer":8, "settings":{"exposureSec":0}}
+            ]));
+            let sparse = layers_from_bytes(&encode_ranges(&job, &rendered));
+            assert_eq!(sparse[2].exposure, 6.);
+            assert_eq!(sparse[3].exposure, 2.);
+            assert_eq!(sparse[7].exposure, 0.);
+            if version != "v2" {
+                assert_eq!(sparse[2].motion[0], 6.); // Normal motion already selected.
+                assert_eq!(&sparse[2].motion[7..10], &[2.25,3.25,1.25]); // Bottom wait cutoff is four.
+                assert_eq!(&sparse[4].motion[7..10], &[5.25,6.25,4.25]);
+                assert_eq!(sparse[7].motion, beyond[7].motion);
+            }
+            for index in 0..12 {
+                assert_eq!(sparse[index].mask, beyond[index].mask);
+                if index != 7 { assert_eq!(sparse[index], beyond[index]); }
+            }
+        }
+    }
+
+
+    #[test]
+    fn layer_settings_ranges_boundaries_original_widths_and_final_motion_totals() {
+        for version in ["v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            let (mut job, rendered) = range_fixture(version, true);
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"first", "startLayer":1, "endLayer":1, "settings":{"exposureSec":0}},
+                {"id":"touch-left", "startLayer":2, "endLayer":3, "settings":{"exposureSec":3}},
+                {"id":"touch-right", "startLayer":4, "endLayer":5, "settings":{"exposureSec":5}},
+                {"id":"partial", "startLayer":5, "endLayer":6, "settings":{"exposureSec":6}},
+                {"id":"lift-total", "startLayer":7, "endLayer":7, "settings":{"liftHeightMm":8}},
+                {"id":"lift-stage2", "startLayer":8, "endLayer":8, "settings":{"liftHeight2Mm":2}},
+                {"id":"retract-stage2", "startLayer":9, "endLayer":9, "settings":{"retractHeight2Mm":4}},
+                {"id":"last", "startLayer":12, "endLayer":12, "settings":{"exposureSec":12}}
+            ]));
+            let layers = layers_from_bytes(&encode_ranges(&job, &rendered));
+            assert_eq!(layers.iter().map(|layer| layer.exposure).collect::<Vec<_>>(),
+                vec![0.,3.,3.,5.,6.,6.,2.,2.,2.,2.,2.,12.]);
+            assert_eq!(layers[6].motion[0], 8.); // Total, not baseline stage 1 + override.
+            assert_eq!(layers[6].motion[2], 1.);
+            assert_eq!(layers[7].motion[0], 6.); // A stage-2 override leaves total unchanged.
+            assert_eq!(layers[7].motion[2], 2.);
+            assert_eq!(layers[8].motion[0], 6.);
+            assert_eq!(layers[8].motion[5], 4.); // Total retract implicitly remains six.
+            job.total_layers = 5;
+            let short = crate::types::RenderedLayersV3 {
+                raw_mask_layers: Some(rendered.raw_mask_layers.as_ref().unwrap()[..5].to_vec()),
+                ..Default::default()
+            };
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"wide", "startLayer":1, "endLayer":100, "settings":{"exposureSec":4,"liftHeightMm":8}},
+                {"id":"narrow", "startLayer":1, "endLayer":10, "settings":{"exposureSec":7}}
+            ]));
+            let clipped = layers_from_bytes(&encode_ranges(&job, &short));
+            assert!(clipped.iter().all(|layer| layer.exposure == 7. && layer.motion[0] == 8.));
+        }
+    }
+
+    #[test]
+    fn layer_settings_ranges_invalid_destinations_preserved_on_all_finalizers() {
+        use crate::encoders::FormatEncoder;
+        let encoder = super::CtbPluginEncoder;
+        for version in ["v2", "v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            let (valid, rendered) = range_fixture(version, version != "v2");
+            for kind in 0..6 {
+                let mut job = valid.clone();
+                match kind {
+                    0 => replace_range_metadata(&mut job, serde_json::json!(null)),
+                    1 => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"bad", "startLayer":1, "endLayer":12, "settings":{"liftHeightMm":1,"liftHeight2Mm":2}}
+                    ])),
+                    2 => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"bad", "startLayer":1, "endLayer":12, "settings":{"liftHeightMm":1,"liftHeight2Mm":0,"retractHeight2Mm":2}}
+                    ])),
+                    3 => {
+                        let mut metadata: serde_json::Value = serde_json::from_str(&job.metadata_json).unwrap();
+                        metadata["ctb"]["bottomLiftDistanceMm"] = serde_json::json!(8);
+                        metadata["ctb"]["bottomLiftDistance2Mm"] = serde_json::json!(2);
+                        job.metadata_json = metadata.to_string();
+                        replace_range_metadata(&mut job, serde_json::json!([
+                            {"id":"boundary", "startLayer":1, "endLayer":12, "settings":{"liftHeight2Mm":7}}
+                        ]));
+                    },
+                    4 => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"precision", "startLayer":1, "endLayer":1, "settings":{"liftHeightMm":8,"liftHeight2Mm":8.000000000000002}}
+                    ])),
+                    _ => job.metadata_json = "not-json".to_string(),
+                }
+                for exists in [false, true] {
+                    for route in 0..3 {
+                        let path = range_path();
+                        if exists { std::fs::write(&path, b"keep destination").unwrap(); }
+                        let result = match route {
+                            0 => encoder.encode_container_to_path(&job, &rendered, &[], &path),
+                            1 => {
+                                let mut stream = encoder.create_rle_stream_encoder(&job).unwrap().unwrap();
+                                for index in 0..12 {
+                                    stream.consume_rle_layer(index, vec![crate::rle::RleRun {length:16,value:255}]).unwrap();
+                                }
+                                stream.finalize_to_path(&path)
+                            },
+                            _ => {
+                                let mut stream = encoder.create_raw_mask_stream_encoder(&job).unwrap().unwrap();
+                                for index in 0..12 { stream.consume_raw_mask_layer(index, vec![255;16]).unwrap(); }
+                                stream.finalize_to_path(&path)
+                            },
+                        };
+                        assert!(result.is_err(), "{version} invalid {kind} route {route}");
+                        if kind == 3 && version != "v2" {
+                            assert!(result.unwrap_err().to_string().contains("layer 3"));
+                        }
+                        if exists {
+                            assert_eq!(std::fs::read(&path).unwrap(), b"keep destination");
+                            std::fs::remove_file(path).unwrap();
+                        } else { assert!(!path.exists()); }
+                    }
+                }
+            }
         }
     }
 

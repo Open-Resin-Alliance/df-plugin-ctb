@@ -7,8 +7,14 @@ export const CTB_FORMAT_DEFINITION: SlicingFormatDefinition = {
   ownership: 'plugin',
   layerDataKind: 'raw-mask',
   pluginId: 'ctb',
+  layerSettingsFields: [
+    'exposureSec', 'lightOffDelaySec', 'waitTimeBeforeCureSec',
+    'waitTimeAfterCureSec', 'waitTimeAfterLiftSec', 'liftHeightMm',
+    'liftHeight2Mm', 'liftSpeedMmMin', 'liftSpeed2MmMin',
+    'retractHeight2Mm', 'retractSpeedMmMin', 'retractSpeed2MmMin', 'lightPwm',
+  ],
   formatVersions: [
-    { value: 'v2', label: 'V2' },
+    { value: 'v2', label: 'V2', layerSettingsFields: ['exposureSec', 'lightOffDelaySec'] },
     { value: 'v3', label: 'V3' },
     { value: 'v4', label: 'V4' },
     { value: 'v5', label: 'V5', isDefault: true },

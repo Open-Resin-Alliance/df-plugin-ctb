@@ -298,13 +298,14 @@ pub(super) fn build_ctb_container_bytes_with_progress(
     prepared: &[CtbPreparedLayer],
     on_progress: Option<&dyn Fn(u32, u32)>,
 ) -> Result<Vec<u8>, SlicerV3Error> {
+    let schedule = super::ctb_encoder::compile_layer_settings(job)?;
     let force_encrypted = parse_ctb_format_version_hint_from_job(job)
         .map(|(_, is_encrypted)| is_encrypted)
         .unwrap_or(false);
 
     if force_encrypted {
-        build_ctb_v5enc_with_progress(job, prepared, on_progress)
+        build_ctb_v5enc_with_progress(job, prepared, &schedule, on_progress)
     } else {
-        build_ctb_v5_with_progress(job, prepared, on_progress)
+        build_ctb_v5_with_progress(job, prepared, &schedule, on_progress)
     }
 }
