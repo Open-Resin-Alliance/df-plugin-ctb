@@ -14,10 +14,12 @@
   "fields": [
     {
       "key": "transitionLayerCount",
+      "perLayerEditable": false,
       "defaultValue": 0
     },
     {
       "key": "bottomProjectorPwmPercent",
+      "perLayerEditable": false,
       "label": "Burn-in Projector PWM (%)",
       "kind": "number",
       "defaultValue": 100,
@@ -29,6 +31,7 @@
     },
     {
       "key": "bottomLiftDistanceMm",
+      "perLayerEditable": false,
       "defaultValue": 3,
       "tag": "Slow",
       "color": "#f59e0b",
@@ -38,6 +41,7 @@
     },
     {
       "key": "bottomLiftDistance2Mm",
+      "perLayerEditable": false,
       "label": "Burn-In Lift Distance 2 (mm)",
       "kind": "number",
       "defaultValue": 4,
@@ -51,6 +55,7 @@
     },
     {
       "key": "bottomLiftSpeedMmMin",
+      "perLayerEditable": false,
       "defaultValue": 60,
       "tag": "Slow",
       "color": "#f59e0b",
@@ -60,6 +65,7 @@
     },
     {
       "key": "bottomLiftSpeed2MmMin",
+      "perLayerEditable": false,
       "label": "Burn-In Lift Speed 2 (mm/min)",
       "kind": "number",
       "defaultValue": 180,
@@ -73,6 +79,7 @@
     },
     {
       "key": "bottomRetractSpeedMmMin",
+      "perLayerEditable": false,
       "defaultValue": 180,
       "tag": "Fast",
       "color": "#22c55e",
@@ -82,6 +89,7 @@
     },
     {
       "key": "bottomRetractSpeed2MmMin",
+      "perLayerEditable": false,
       "label": "Burn-In Retract Speed 2 (mm/min)",
       "kind": "number",
       "defaultValue": 60,
@@ -95,6 +103,8 @@
     },
     {
       "key": "liftDistanceMm",
+      "perLayerEditable": true,
+      "perLayerField": "liftHeightMm",
       "defaultValue": 1,
       "tag": "Slow",
       "color": "#f59e0b",
@@ -103,6 +113,8 @@
     },
     {
       "key": "liftDistance2Mm",
+      "perLayerEditable": true,
+      "perLayerField": "liftHeight2Mm",
       "label": "Lift Distance 2 (mm)",
       "kind": "number",
       "defaultValue": 4,
@@ -116,6 +128,7 @@
     },
     {
       "key": "liftSpeedMmMin",
+      "perLayerEditable": true,
       "tag": "Slow",
       "color": "#f59e0b",
       "splitWithKey": "liftSpeed2MmMin",
@@ -123,6 +136,7 @@
     },
     {
       "key": "liftSpeed2MmMin",
+      "perLayerEditable": true,
       "label": "Lift Speed 2 (mm/min)",
       "kind": "number",
       "defaultValue": 240,
@@ -136,6 +150,7 @@
     },
     {
       "key": "retractSpeedMmMin",
+      "perLayerEditable": true,
       "defaultValue": 240,
       "tag": "Fast",
       "color": "#22c55e",
@@ -144,6 +159,7 @@
     },
     {
       "key": "retractSpeed2MmMin",
+      "perLayerEditable": true,
       "label": "Retract Speed 2 (mm/min)",
       "kind": "number",
       "defaultValue": 60,

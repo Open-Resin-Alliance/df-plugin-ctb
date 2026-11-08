@@ -6,6 +6,7 @@
   "fields": [
     {
       "key": "waitTimeBottomLayerCount",
+      "perLayerEditable": false,
       "label": "Extended Wait Time Layers From Bottom",
       "kind": "number",
       "defaultValue": 5,
@@ -17,6 +18,7 @@
     },
     {
       "key": "bottomWaitTimeBeforeCureSec",
+      "perLayerEditable": false,
       "label": "Extended Wait Before Cure (s)",
       "kind": "number",
       "defaultValue": 0,
@@ -28,6 +30,7 @@
     },
     {
       "key": "bottomWaitTimeAfterCureSec",
+      "perLayerEditable": false,
       "label": "Extended Wait After Cure (s)",
       "kind": "number",
       "defaultValue": 0,
@@ -39,6 +42,7 @@
     },
     {
       "key": "bottomWaitTimeAfterLiftSec",
+      "perLayerEditable": false,
       "label": "Extended Wait After Lift (s)",
       "kind": "number",
       "defaultValue": 0,
@@ -50,10 +54,12 @@
     },
     {
       "key": "transitionLayerCount",
+      "perLayerEditable": false,
       "defaultValue": 0
     },
     {
       "key": "bottomProjectorPwmPercent",
+      "perLayerEditable": false,
       "label": "Burn-in Projector PWM (%)",
       "kind": "number",
       "defaultValue": 100,
