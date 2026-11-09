@@ -1152,7 +1152,7 @@ mod tests {
                 settings["lightPwm"] = serde_json::json!(0);
             }
             replace_range_metadata(&mut job, serde_json::json!([
-                {"id":"blur","startLayer":1,"endLayer":8,"blendStart":4,"blendEnd":2,"settings":settings}
+                {"id":"blur","startLayer":5,"endLayer":6,"blendStart":4,"blendEnd":2,"settings":settings}
             ]));
             let layers = layers_from_bytes(&encode_ranges(&job, &rendered));
             assert_eq!(layers[0], baseline[0]);
@@ -1173,8 +1173,8 @@ mod tests {
             if extended {
                 replace_range_metadata(&mut job, serde_json::json!([
                     {"id":"floor","startLayer":1,"endLayer":100,"settings":{"lightPwm":0}},
-                    {"id":"middle","startLayer":1,"endLayer":20,"blendStart":2,"settings":{"lightPwm":1}},
-                    {"id":"top","startLayer":1,"endLayer":10,"blendStart":2,"settings":{"lightPwm":0}}
+                    {"id":"middle","startLayer":3,"endLayer":20,"blendStart":2,"settings":{"lightPwm":1}},
+                    {"id":"top","startLayer":3,"endLayer":10,"blendStart":2,"settings":{"lightPwm":0}}
                 ]));
                 assert_eq!(layers_from_bytes(&encode_ranges(&job,&rendered))[1].motion[10], 0.);
             }
@@ -1341,8 +1341,8 @@ mod tests {
                         {"id":"motion", "unit":"mm", "startMm":0.05, "endMm":0.6, "settings":{"liftHeightMm":1,"liftHeight2Mm":2}}
                     ])),
                     _ => replace_range_metadata(&mut job, serde_json::json!([
-                        {"id":"total","startLayer":1,"endLayer":8,"blendStart":4,"blendEnd":4,"settings":{"liftHeightMm":2}},
-                        {"id":"stage2","startLayer":1,"endLayer":8,"settings":{"liftHeight2Mm":3}}
+                        {"id":"total","startLayer":13,"endLayer":20,"blendStart":12,"settings":{"liftHeightMm":2}},
+                        {"id":"stage2","startLayer":1,"endLayer":12,"settings":{"liftHeight2Mm":3}}
                     ])),
                 }
                 for exists in [false, true] {
