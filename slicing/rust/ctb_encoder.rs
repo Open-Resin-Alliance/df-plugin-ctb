@@ -1,6 +1,6 @@
 // Non-encrypted CTB V5 format handling
 use crate::engine::SlicerV3Error;
-use crate::layer_settings::{LayerPrintSettingsPatch, LayerSettingField, LayerSettingsSchedule};
+use crate::layer_settings::{LayerSettingField, LayerSettingsSchedule};
 use crate::types::SliceJobV3;
 
 use super::ctb_layout::{
@@ -319,7 +319,7 @@ struct CtbLayerRecord {
 fn resolve_layer_record(
     layer_index: u32,
     timing: CtbTimingModel,
-    patch: Option<&LayerPrintSettingsPatch>,
+    schedule: &LayerSettingsSchedule,
 ) -> CtbLayerRecord {
     let clamp_non_negative = |value: f32| {
         if !value.is_finite() || value <= 0.0 {
@@ -423,6 +423,22 @@ fn resolve_layer_record(
         wait_time_before_cure: clamp_non_negative(wait_time_before_cure) as f64,
         projector_duty_cycle_pwm: clamp_non_negative(projector_duty_cycle_pwm as f32) as f64,
     };
+    let patch = schedule.resolve_at(layer_index, |field| match field {
+        LayerSettingField::ExposureSec => record.exposure_sec,
+        LayerSettingField::LightOffDelaySec => record.light_off_sec,
+        LayerSettingField::LiftHeightMm => record.lift_height_total,
+        LayerSettingField::LiftSpeedMmMin => record.lift_speed,
+        LayerSettingField::LiftHeight2Mm => record.lift_height_2,
+        LayerSettingField::LiftSpeed2MmMin => record.lift_speed2,
+        LayerSettingField::RetractSpeedMmMin => record.retract_speed,
+        LayerSettingField::RetractHeight2Mm => record.retract_height_2,
+        LayerSettingField::RetractSpeed2MmMin => record.retract_speed2,
+        LayerSettingField::WaitTimeAfterCureSec => record.wait_time_after_cure,
+        LayerSettingField::WaitTimeAfterLiftSec => record.wait_time_after_lift,
+        LayerSettingField::WaitTimeBeforeCureSec => record.wait_time_before_cure,
+        LayerSettingField::LightPwm => record.projector_duty_cycle_pwm,
+        LayerSettingField::RetractHeightMm => unreachable!("CTB rejects independent total retract height"),
+    });
     if let Some(patch) = patch {
         if let Some(value) = patch.exposure_sec { record.exposure_sec = value; }
         if let Some(value) = patch.light_off_delay_sec { record.light_off_sec = value; }
@@ -453,27 +469,21 @@ pub(super) fn compile_layer_settings(job: &SliceJobV3) -> Result<LayerSettingsSc
     let fields = if build.version == 2 { V2_FIELDS } else { EXTENDED_FIELDS };
     let schedule = LayerSettingsSchedule::from_job(job, fields)?;
     let timing = parse_timing_model_from_metadata(&job.metadata_json);
-    for segment in schedule.segments() {
-        let validate = |layer_number: u32| -> Result<(), SlicerV3Error> {
-            let record = resolve_layer_record(layer_number - 1, timing, Some(&segment.settings));
-            if record.lift_height_2 > record.lift_height_total {
-                return Err(SlicerV3Error::InvalidLayerSettingsRanges(format!(
-                    "layer {layer_number}: liftHeight2Mm exceeds liftHeightMm"
-                )));
-            }
-            // CTB derives total retract travel from the final total lift height.
-            if record.retract_height_2 > record.lift_height_total {
-                return Err(SlicerV3Error::InvalidLayerSettingsRanges(format!(
-                    "layer {layer_number}: retractHeight2Mm exceeds liftHeightMm"
-                )));
-            }
-            Ok(())
-        };
-        validate(segment.start_layer)?;
-        if segment.start_layer <= timing.bottom_layer_count && timing.bottom_layer_count < segment.end_layer {
-            validate(timing.bottom_layer_count + 1)?;
+    schedule.validate_heights(timing.bottom_layer_count, |layer_number| {
+        let record = resolve_layer_record(layer_number - 1, timing, &schedule);
+        if record.lift_height_2 > record.lift_height_total {
+            return Err(SlicerV3Error::InvalidLayerSettingsRanges(format!(
+                "layer {layer_number}: liftHeight2Mm exceeds liftHeightMm"
+            )));
         }
-    }
+        // CTB derives total retract travel from the final total lift height.
+        if record.retract_height_2 > record.lift_height_total {
+            return Err(SlicerV3Error::InvalidLayerSettingsRanges(format!(
+                "layer {layer_number}: retractHeight2Mm exceeds liftHeightMm"
+            )));
+        }
+        Ok(())
+    })?;
     Ok(schedule)
 }
 
@@ -492,7 +502,7 @@ fn write_layer_def_ex(
         LayerDefLayout::Extended => CTB_LAYER_DEF_EX_SIZE,
         LayerDefLayout::Basic => CTB_LAYER_DEF_SIZE,
     };
-    let record = resolve_layer_record(layer.index as u32, timing, schedule.patch_at(layer.index as u32));
+    let record = resolve_layer_record(layer.index as u32, timing, schedule);
     match layout {
         LayerDefLayout::Encrypted => {
             push_u32(out, table_size);
@@ -531,7 +541,7 @@ fn write_layer_def_ex(
     push_f32(out, record.wait_time_after_cure as f32);
     push_f32(out, record.wait_time_after_lift as f32);
     push_f32(out, record.wait_time_before_cure as f32);
-    push_f32(out, record.projector_duty_cycle_pwm as f32); //test as u32/u16
+    push_f32(out, record.projector_duty_cycle_pwm.round() as f32); //test as u32/u16
 
     
     if matches!(layout, LayerDefLayout::Encrypted) { push_u32(out, 0); }

@@ -1137,6 +1137,59 @@ mod tests {
     }
 
     #[test]
+    fn layer_settings_ranges_blend_encoded_baselines_motion_and_pwm() {
+        for version in ["v2", "v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
+            let extended = version != "v2";
+            let (mut job, rendered) = range_fixture(version, extended);
+            let mut plain = job.clone();
+            replace_range_metadata(&mut plain, serde_json::json!([]));
+            let baseline = layers_from_bytes(&encode_ranges(&plain, &rendered));
+            let mut settings = serde_json::json!({"exposureSec":8,"lightOffDelaySec":0});
+            if extended {
+                settings["liftHeightMm"] = serde_json::json!(8);
+                settings["liftHeight2Mm"] = serde_json::json!(2);
+                settings["waitTimeAfterCureSec"] = serde_json::json!(1);
+                settings["lightPwm"] = serde_json::json!(0);
+            }
+            replace_range_metadata(&mut job, serde_json::json!([
+                {"id":"blur","startLayer":1,"endLayer":8,"blendStart":4,"blendEnd":2,"settings":settings}
+            ]));
+            let layers = layers_from_bytes(&encode_ranges(&job, &rendered));
+            assert_eq!(layers[0], baseline[0]);
+            assert_eq!(layers[7], baseline[7]);
+            for (index, weight) in [(1,0.25),(2,0.5),(3,0.75),(4,1.0),(5,1.0),(6,0.5)] {
+                let base = f64::from(baseline[index].exposure);
+                assert_eq!(layers[index].exposure, (base + (8. - base) * weight) as f32, "{version} layer {}", index+1);
+                assert_eq!(layers[index].light_off, (f64::from(baseline[index].light_off) * (1.-weight)) as f32);
+                assert_eq!(layers[index].mask, baseline[index].mask);
+                if extended {
+                    for (field, target) in [(0,8.),(2,2.),(7,1.)] {
+                        let base = f64::from(baseline[index].motion[field]);
+                        assert_eq!(layers[index].motion[field], (base + (target - base) * weight) as f32);
+                    }
+                    assert_eq!(layers[index].motion[10], (f64::from(baseline[index].motion[10]) * (1.-weight)).round() as f32);
+                }
+            }
+            if extended {
+                replace_range_metadata(&mut job, serde_json::json!([
+                    {"id":"floor","startLayer":1,"endLayer":100,"settings":{"lightPwm":0}},
+                    {"id":"middle","startLayer":1,"endLayer":20,"blendStart":2,"settings":{"lightPwm":1}},
+                    {"id":"top","startLayer":1,"endLayer":10,"blendStart":2,"settings":{"lightPwm":0}}
+                ]));
+                assert_eq!(layers_from_bytes(&encode_ranges(&job,&rendered))[1].motion[10], 0.);
+            }
+            let (mut disabled, _) = range_fixture(version, extended);
+            let original = encode_ranges(&disabled, &rendered);
+            let mut metadata: serde_json::Value = serde_json::from_str(&disabled.metadata_json).unwrap();
+            for range in metadata["layerSettingsRanges"].as_array_mut().unwrap() {
+                range["blendStart"] = serde_json::json!(0); range["blendEnd"] = serde_json::json!(0);
+            }
+            disabled.metadata_json = metadata.to_string();
+            assert_eq!(encode_ranges(&disabled, &rendered), original);
+        }
+    }
+
+    #[test]
     fn layer_settings_ranges_v2_rejects_motion_and_all_versions_reject_total_retract() {
         use crate::encoders::FormatEncoder;
         use crate::layer_settings::LayerSettingField;
@@ -1252,7 +1305,7 @@ mod tests {
         let encoder = super::CtbPluginEncoder;
         for version in ["v2", "v3", "v4", "v5", "v3enc", "v4enc", "v5enc"] {
             let (valid, rendered) = range_fixture(version, version != "v2");
-            for kind in 0..10 {
+            for kind in 0..11 {
                 let mut job = valid.clone();
                 match kind {
                     0 => replace_range_metadata(&mut job, serde_json::json!(null)),
@@ -1284,8 +1337,12 @@ mod tests {
                     8 => replace_range_metadata(&mut job, serde_json::json!([
                         {"id":"outside", "unit":"mm", "startMm":20.0, "endMm":30.0, "settings":{"retractHeightMm":8}}
                     ])),
-                    _ => replace_range_metadata(&mut job, serde_json::json!([
+                    9 => replace_range_metadata(&mut job, serde_json::json!([
                         {"id":"motion", "unit":"mm", "startMm":0.05, "endMm":0.6, "settings":{"liftHeightMm":1,"liftHeight2Mm":2}}
+                    ])),
+                    _ => replace_range_metadata(&mut job, serde_json::json!([
+                        {"id":"total","startLayer":1,"endLayer":8,"blendStart":4,"blendEnd":4,"settings":{"liftHeightMm":2}},
+                        {"id":"stage2","startLayer":1,"endLayer":8,"settings":{"liftHeight2Mm":3}}
                     ])),
                 }
                 for exists in [false, true] {
