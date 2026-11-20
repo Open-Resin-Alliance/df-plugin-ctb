@@ -1,5 +1,6 @@
 [dependencies]
 # Add CTB-specific crates as implementation progresses.
+log = "0.4.35"
 
 [optional-dependencies]
 

@@ -1,4 +1,6 @@
 // Non-encrypted CTB V5 format handling
+
+use log::{info, warn};
 use crate::engine::SlicerV3Error;
 use crate::types::SliceJobV3;
 
@@ -454,6 +456,7 @@ fn write_layer_def_ex(
 }
 
 fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> u32 {
+    /*
     let mut total = 0.0_f32;
     for i in 0..prepared_count {
         let is_bottom = (i as u32) < timing.bottom_layer_count;
@@ -474,6 +477,36 @@ fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> 
             + timing.retract_speed_mm_min.max(0.0) * 0.0;
     }
     total.round().max(0.0) as u32
+    */
+
+    let mut total = 0.0_f32;
+
+    //It looks like in simple settings mode, that bottom lift and retract distances are still defined.
+    //In that case we dont have to use normal layer speeds.
+    //The bottom wait times are never written - tested with several printers. In this case, we can just use normal layer wait times.
+    
+    let waitTimePerLayer = timing.light_off_delay_sec + timing.wait_time_before_cure_sec + timing.wait_time_after_cure_sec + timing.wait_time_after_lift_sec;
+    let bottomMoveTimeStageOne = ((timing.bottom_lift_distance_mm / timing.bottom_lift_speed_mm_min) + (timing.bottom_lift_distance_mm / timing.bottom_retract_speed_mm_min)) * 60.0;
+    let bottomMoveTimeStageTwo = if timing.bottom_lift_distance2_mm == 0.0 { 0.0 } else { ((timing.bottom_lift_distance2_mm / timing.bottom_retract_speed2_mm_min) + (timing.bottom_lift_distance2_mm / timing.bottom_lift_speed2_mm_min)) * 60.0 };
+    
+    let bottomLayerTime = timing.bottom_exposure_sec + waitTimePerLayer + bottomMoveTimeStageOne + bottomMoveTimeStageTwo;
+    let totalBottomLayerTime = bottomLayerTime * (timing.bottom_layer_count as f32);
+
+    info!("BottomWaitTimePerLayer: {}, bottomMoveTimeStageOne: {}, bottomMoveTimeStageTwo: {}", waitTimePerLayer, bottomMoveTimeStageOne, bottomMoveTimeStageTwo);
+    info!("Bottom Layer Time: {}", bottomLayerTime);
+    
+    let waitTimePerLayer = timing.light_off_delay_sec + timing.wait_time_before_cure_sec + timing.wait_time_after_cure_sec + timing.wait_time_after_lift_sec;
+    let moveTimeStageOne = ((timing.lift_distance_mm / timing.lift_speed_mm_min) + (timing.retract_distance_mm / timing.retract_speed_mm_min)) * 60.0;
+    let moveTimeStageTwo = if timing.lift_distance2_mm == 0.0 { 0.0 } else { ((timing.retract_distance2_mm / timing.retract_speed2_mm_min) + (timing.lift_distance2_mm / timing.lift_speed2_mm_min)) * 60.0 };
+    
+    let layerTime = timing.normal_exposure_sec + waitTimePerLayer + moveTimeStageOne + moveTimeStageTwo;
+    let totalLayerTime = layerTime * ((prepared_count as f32) - (timing.bottom_layer_count as f32));
+
+    total = totalBottomLayerTime + totalLayerTime;
+    info!("Num Layers: {}, Bottom Layer Time: {}, Total Layer Time = {}", prepared_count, totalBottomLayerTime, total);
+    total.round().max(0.0) as u32
+    
+    
 }
 
 pub(super) fn build_ctb_container_bytes_with_progress(
