@@ -1,4 +1,5 @@
 // Non-encrypted CTB V5 format handling
+
 use crate::engine::SlicerV3Error;
 use crate::types::SliceJobV3;
 
@@ -454,26 +455,26 @@ fn write_layer_def_ex(
 }
 
 fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> u32 {
-    let mut total = 0.0_f32;
-    for i in 0..prepared_count {
-        let is_bottom = (i as u32) < timing.bottom_layer_count;
-        let exposure = if is_bottom {
-            timing.bottom_exposure_sec
-        } else {
-            timing.normal_exposure_sec
-        };
-        let light_off = if is_bottom {
-            timing.bottom_light_off_delay_sec
-        } else {
-            timing.light_off_delay_sec
-        };
 
-        total += exposure.max(0.0)
-            + light_off.max(0.0)
-            + timing.lift_distance_mm.max(0.0)
-            + timing.retract_speed_mm_min.max(0.0) * 0.0;
-    }
+    let mut total = 0.0_f32;
+
+    let wait_time_per_layer = timing.light_off_delay_sec + timing.wait_time_before_cure_sec + timing.wait_time_after_cure_sec + timing.wait_time_after_lift_sec;
+    let bottom_move_time_stage_one = ((timing.bottom_lift_distance_mm / timing.bottom_lift_speed_mm_min) + (timing.bottom_lift_distance_mm / timing.bottom_retract_speed_mm_min)) * 60.0;
+    let bottom_move_time_stage_two = if timing.bottom_lift_distance2_mm == 0.0 { 0.0 } else { ((timing.bottom_lift_distance2_mm / timing.bottom_retract_speed2_mm_min) + (timing.bottom_lift_distance2_mm / timing.bottom_lift_speed2_mm_min)) * 60.0 };
+    
+    let bottom_layer_time = timing.bottom_exposure_sec + wait_time_per_layer + bottom_move_time_stage_one + bottom_move_time_stage_two;
+    let total_bottom_layer_time = bottom_layer_time * (timing.bottom_layer_count as f32);
+
+    let wait_time_per_layer = timing.light_off_delay_sec + timing.wait_time_before_cure_sec + timing.wait_time_after_cure_sec + timing.wait_time_after_lift_sec;
+    let move_time_stage_one = ((timing.lift_distance_mm / timing.lift_speed_mm_min) + (timing.retract_distance_mm / timing.retract_speed_mm_min)) * 60.0;
+    let move_time_stage_two = if timing.lift_distance2_mm == 0.0 { 0.0 } else { ((timing.retract_distance2_mm / timing.retract_speed2_mm_min) + (timing.lift_distance2_mm / timing.lift_speed2_mm_min)) * 60.0 };
+    
+    let layer_time = timing.normal_exposure_sec + wait_time_per_layer + move_time_stage_one + move_time_stage_two;
+    let total_layer_time = layer_time * ((prepared_count as f32) - (timing.bottom_layer_count as f32));
+
+    total = total_bottom_layer_time + total_layer_time;
     total.round().max(0.0) as u32
+
 }
 
 pub(super) fn build_ctb_container_bytes_with_progress(
