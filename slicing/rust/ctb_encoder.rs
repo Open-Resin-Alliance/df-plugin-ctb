@@ -465,9 +465,6 @@ fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> 
     let bottom_layer_time = timing.bottom_exposure_sec + wait_time_per_layer + bottom_move_time_stage_one + bottom_move_time_stage_two;
     let total_bottom_layer_time = bottom_layer_time * (timing.bottom_layer_count as f32);
 
-    info!("BottomWaitTimePerLayer: {}, bottom_move_time_stage_one: {}, bottom_move_time_stage_two: {}", wait_time_per_layer, bottom_move_time_stage_one, bottom_move_time_stage_two);
-    info!("Bottom Layer Time: {}", bottom_layer_time);
-    
     let wait_time_per_layer = timing.light_off_delay_sec + timing.wait_time_before_cure_sec + timing.wait_time_after_cure_sec + timing.wait_time_after_lift_sec;
     let move_time_stage_one = ((timing.lift_distance_mm / timing.lift_speed_mm_min) + (timing.retract_distance_mm / timing.retract_speed_mm_min)) * 60.0;
     let move_time_stage_two = if timing.lift_distance2_mm == 0.0 { 0.0 } else { ((timing.retract_distance2_mm / timing.retract_speed2_mm_min) + (timing.lift_distance2_mm / timing.lift_speed2_mm_min)) * 60.0 };
