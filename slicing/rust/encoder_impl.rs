@@ -437,6 +437,16 @@ impl FormatEncoder for CtbPluginEncoder {
         layers.saturating_mul(2).saturating_add(1).max(1)
     }
 
+    fn estimate_print_time_sec(
+        &self,
+        metadata_json: &str,
+        _layer_height_mm: f32,
+        total_layers: u32,
+    ) -> Option<u32> {
+        let timing = ctb_metadata::parse_timing_model_from_metadata(metadata_json);
+        Some(ctb_encoder::compute_print_time_seconds(total_layers as usize, timing))
+    }
+
     fn encode_container_from_rendered_layers_with_progress(
         &self,
         job: &SliceJobV3,

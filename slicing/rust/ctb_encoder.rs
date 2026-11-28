@@ -453,7 +453,7 @@ fn write_layer_def_ex(
     if matches!(layout, LayerDefLayout::Encrypted) { push_u32(out, 0); }
 }
 
-fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> u32 {
+pub(super) fn compute_print_time_seconds(prepared_count: usize, timing: CtbTimingModel) -> u32 {
     let mut total = 0.0_f32;
     for i in 0..prepared_count {
         let is_bottom = (i as u32) < timing.bottom_layer_count;
